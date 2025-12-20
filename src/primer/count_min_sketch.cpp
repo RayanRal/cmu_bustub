@@ -44,14 +44,18 @@ CountMinSketch<KeyType>::CountMinSketch(uint32_t width, uint32_t depth) : width_
 
 template <typename KeyType>
 CountMinSketch<KeyType>::CountMinSketch(CountMinSketch &&other) noexcept : width_(other.width_), depth_(other.depth_) {
-  // move constructor, transfers ownership of sketch resources from another instance.
-  /** @TODO(student) Implement this function! */
+  sketch_ = std::move(other.sketch_);
+  hash_functions_ = std::move(other.hash_functions_);
 }
 
 template <typename KeyType>
 auto CountMinSketch<KeyType>::operator=(CountMinSketch &&other) noexcept -> CountMinSketch & {
-  // move assignment, moves sketch resources from another instance to this one.
-  /** @TODO(student) Implement this function! */
+  if (this != &other) {
+    width_ = other.width_;
+    depth_ = other.depth_;
+    sketch_ = std::move(other.sketch_);
+    hash_functions_ = std::move(other.hash_functions_);
+  }
   return *this;
 }
 
@@ -69,7 +73,11 @@ void CountMinSketch<KeyType>::Merge(const CountMinSketch<KeyType> &other) {
   if (width_ != other.width_ || depth_ != other.depth_) {
     throw std::invalid_argument("Incompatible CountMinSketch dimensions for merge.");
   }
-  /** @TODO(student) Implement this function! */
+  for (size_t i = 0; i < depth_; ++i) {
+    for (size_t j = 0; j < width_; ++j) {
+      sketch_[i][j] += other.sketch_[i][j];
+    }
+  }
 }
 
 template <typename KeyType>
