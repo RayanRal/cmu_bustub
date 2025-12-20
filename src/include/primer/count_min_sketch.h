@@ -84,6 +84,8 @@ class CountMinSketch {
   uint32_t depth_;  // Number of independent hash functions
   /** Pre-computed hash functions for each row */
   std::vector<std::function<size_t(const KeyType &)>> hash_functions_;
+  /** The 2D sketch matrix (depth rows × width columns) */
+  std::vector<std::vector<uint32_t>> sketch_;
 
   /** @fall2025 PLEASE DO NOT MODIFY THE FOLLOWING */
   constexpr static size_t SEED_BASE = 15445;

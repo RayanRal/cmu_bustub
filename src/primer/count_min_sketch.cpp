@@ -12,6 +12,7 @@
 
 #include "primer/count_min_sketch.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 
@@ -26,7 +27,12 @@ namespace bustub {
  */
 template <typename KeyType>
 CountMinSketch<KeyType>::CountMinSketch(uint32_t width, uint32_t depth) : width_(width), depth_(depth) {
-  /** @TODO(student) Implement this function! */
+  if (width == 0 || depth == 0) {
+    throw std::invalid_argument("Width and depth must be greater than zero.");
+  }
+
+  // Initialize the 2D matrix (depth rows, width columns) with zeros and assign it to sketch
+  sketch_.assign(depth_, std::vector<uint32_t>(width_, 0));
 
   /** @fall2025 PLEASE DO NOT MODIFY THE FOLLOWING */
   // Initialize seeded hash functions
@@ -38,18 +44,24 @@ CountMinSketch<KeyType>::CountMinSketch(uint32_t width, uint32_t depth) : width_
 
 template <typename KeyType>
 CountMinSketch<KeyType>::CountMinSketch(CountMinSketch &&other) noexcept : width_(other.width_), depth_(other.depth_) {
+  // move constructor, transfers ownership of sketch resources from another instance.
   /** @TODO(student) Implement this function! */
 }
 
 template <typename KeyType>
 auto CountMinSketch<KeyType>::operator=(CountMinSketch &&other) noexcept -> CountMinSketch & {
+  // move assignment, moves sketch resources from another instance to this one.
   /** @TODO(student) Implement this function! */
   return *this;
 }
 
 template <typename KeyType>
 void CountMinSketch<KeyType>::Insert(const KeyType &item) {
-  /** @TODO(student) Implement this function! */
+  // @TODO this is not thread-safe yet
+  for (size_t i = 0; i < depth_; i++) {
+    const size_t col = hash_functions_[i](item);
+    ++sketch_[i][col];
+  }
 }
 
 template <typename KeyType>
@@ -62,12 +74,20 @@ void CountMinSketch<KeyType>::Merge(const CountMinSketch<KeyType> &other) {
 
 template <typename KeyType>
 auto CountMinSketch<KeyType>::Count(const KeyType &item) const -> uint32_t {
-  return 0;
+  uint32_t min_count = UINT32_MAX;
+  for (size_t i = 0; i < depth_; ++i) {
+    const size_t col = hash_functions_[i](item);
+    if (const uint32_t current = sketch_[i][col]; current < min_count) {
+      min_count = current;
+    }
+  }
+  return (min_count == UINT32_MAX) ? 0 : min_count;
 }
 
 template <typename KeyType>
 void CountMinSketch<KeyType>::Clear() {
-  /** @TODO(student) Implement this function! */
+  sketch_.clear();
+  sketch_.assign(depth_, std::vector<uint32_t>(width_, 0));
 }
 
 template <typename KeyType>
