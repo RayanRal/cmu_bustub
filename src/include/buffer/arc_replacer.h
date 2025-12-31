@@ -28,7 +28,6 @@ enum class AccessType { Unknown = 0, Lookup, Scan, Index };
 
 enum class ArcStatus { MRU, MFU, MRU_GHOST, MFU_GHOST };
 
-// TODO(student): You can modify or remove this struct as you like.
 struct FrameStatus {
   page_id_t page_id_;
   frame_id_t frame_id_;
@@ -61,7 +60,6 @@ class ArcReplacer {
   auto Size() -> size_t;
 
  private:
-  // TODO(student): implement me! You can replace or remove these member variables as you like.
   std::list<frame_id_t> mru_;
   std::list<frame_id_t> mfu_;
   std::list<page_id_t> mru_ghost_;
@@ -84,7 +82,10 @@ class ArcReplacer {
   [[maybe_unused]] size_t replacer_size_;
   std::mutex latch_;
 
-  // TODO(student): You can add member variables / functions as you like.
+  void HandleCacheHit(frame_id_t frame_id);
+  void HandleMruGhostHit(frame_id_t frame_id, page_id_t page_id);
+  void HandleMfuGhostHit(frame_id_t frame_id, page_id_t page_id);
+  void HandleCacheMiss(frame_id_t frame_id, page_id_t page_id);
 };
 
 }  // namespace bustub
