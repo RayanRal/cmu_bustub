@@ -34,12 +34,6 @@ jobs:
               format: "/usr/bin/clang-format-15",
               tidy: "/usr/bin/clang-tidy-15",
             }
-          - {
-              name: "macOS 14 (Sonoma) AppleClang",
-              os: macos-14,
-              format: "/opt/homebrew/opt/llvm@15/bin/clang-format",
-              tidy: "/opt/homebrew/opt/llvm@15/bin/clang-tidy",
-            }
     steps:
       - uses: actions/checkout@v2
 
@@ -51,11 +45,6 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: ${{github.workspace}}
         run: sudo bash ./build_support/packages.sh -y
-
-      - name: Install Dependencies (macOS)
-        if: runner.os == 'macOS'
-        working-directory: ${{github.workspace}}
-        run: bash ./build_support/packages.sh -y
 
       - name: Configure CMake
         run: CC=${{matrix.config.cc}} CXX=${{matrix.config.cxx}} cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DCLANG_FORMAT_BIN=${{matrix.config.format}} -DCLANG_TIDY_BIN=${{matrix.config.tidy}}
