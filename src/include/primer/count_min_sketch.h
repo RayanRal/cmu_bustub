@@ -80,13 +80,13 @@ class CountMinSketch {
   auto TopK(uint16_t k, const std::vector<KeyType> &candidates) -> std::vector<std::pair<KeyType, uint32_t>>;
 
  private:
-   /** Dimensions of the count-min sketch matrix */
-   uint32_t width_;  // Number of buckets for each hash function
-   uint32_t depth_;  // Number of independent hash functions
-   /** Pre-computed hash functions for each row */
-   std::vector<std::function<size_t(const KeyType &)>> hash_functions_;
-   /** The 2D sketch matrix (depth rows × width columns) */
-   std::vector<std::vector<std::atomic<uint32_t>>> sketch_;
+  /** Dimensions of the count-min sketch matrix */
+  uint32_t width_;  // Number of buckets for each hash function
+  uint32_t depth_;  // Number of independent hash functions
+  /** Pre-computed hash functions for each row */
+  std::vector<std::function<size_t(const KeyType &)>> hash_functions_;
+  /** The 2D sketch matrix (depth rows × width columns) */
+  std::vector<std::vector<std::atomic<uint32_t>>> sketch_;
 
   /** @fall2025 PLEASE DO NOT MODIFY THE FOLLOWING */
   constexpr static size_t SEED_BASE = 15445;
@@ -104,8 +104,6 @@ class CountMinSketch {
       return bustub::HashUtil::CombineHashes(h1, h2) % width_;
     };
   }
-
-  /** @todo (student) can add their data structures that support count-min sketch operations */
 };
 
 }  // namespace bustub
