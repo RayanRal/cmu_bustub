@@ -79,6 +79,9 @@ ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept
  * @return ReadPageGuard& The newly valid `ReadPageGuard`.
  */
 auto ReadPageGuard::operator=(ReadPageGuard &&that) noexcept -> ReadPageGuard & {
+  if (this == &that) {
+    return *this;
+  }
   Drop();
   page_id_ = that.page_id_;
   frame_ = std::move(that.frame_);
@@ -222,6 +225,9 @@ WritePageGuard::WritePageGuard(WritePageGuard &&that) noexcept
  * @return WritePageGuard& The newly valid `WritePageGuard`.
  */
 auto WritePageGuard::operator=(WritePageGuard &&that) noexcept -> WritePageGuard & {
+  if (this == &that) {
+    return *this;
+  }
   Drop();
   page_id_ = that.page_id_;
   frame_ = std::move(that.frame_);
