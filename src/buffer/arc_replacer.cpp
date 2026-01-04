@@ -65,6 +65,29 @@ auto ArcReplacer::Evict() -> std::optional<frame_id_t> {
         return frame_id;
       }
     }
+
+    // Fallback: If all entries in MRU are pinned, try MFU
+    for (auto it = mfu_.rbegin(); it != mfu_.rend(); ++it) {
+      frame_id_t frame_id = *it;
+      auto frame_status = alive_map_[frame_id];
+      
+      if (frame_status->evictable_) {
+        // Move to MFU ghost using iterator for O(1) erase
+        if (frame_status->alive_iter_) {
+          mfu_.erase(*frame_status->alive_iter_);
+        }
+        mfu_ghost_.push_front(frame_status->page_id_);
+        frame_status->ghost_iter_ = mfu_ghost_.begin();
+        
+        // Update maps
+        alive_map_.erase(frame_id);
+        ghost_map_[frame_status->page_id_] = frame_status;
+        frame_status->arc_status_ = ArcStatus::MFU_GHOST;
+        
+        curr_size_--;
+        return frame_id;
+      }
+    }
   } else {
     // Evict from MFU
     for (auto it = mfu_.rbegin(); it != mfu_.rend(); ++it) {

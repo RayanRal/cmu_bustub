@@ -36,7 +36,6 @@ ReadPageGuard::ReadPageGuard(page_id_t page_id, std::shared_ptr<FrameHeader> fra
       replacer_(std::move(replacer)),
       bpm_latch_(std::move(bpm_latch)),
       disk_scheduler_(std::move(disk_scheduler)) {
-  fmt::println(stderr, "DEBUG ReadPageGuard::ReadPageGuard(explicit) page_id={}", page_id);
   frame_->rwlatch_.lock_shared();
   is_valid_ = true;
 }
@@ -61,7 +60,6 @@ ReadPageGuard::ReadPageGuard(ReadPageGuard &&that) noexcept
       bpm_latch_(std::move(that.bpm_latch_)),
       disk_scheduler_(std::move(that.disk_scheduler_)),
       is_valid_(that.is_valid_) {
-  fmt::println(stderr, "DEBUG ReadPageGuard::ReadPageGuard(move) page_id={}, from_is_valid={}", page_id_, that.is_valid_);
   that.is_valid_ = false;
 }
 
@@ -137,20 +135,17 @@ void ReadPageGuard::Flush() {
  * TODO(P1): Add implementation.
  */
 void ReadPageGuard::Drop() {
-  fmt::println(stderr, "DEBUG ReadPageGuard::Drop() START is_valid_={}", is_valid_);
   if (!is_valid_) {
-    fmt::println(stderr, "DEBUG ReadPageGuard::Drop() returning early: is_valid_=false");
     return;
   }
   
-  fmt::println(stderr, "DEBUG ReadPageGuard::Drop() page_id={}, frame_id={}", page_id_, frame_->frame_id_);
   frame_->rwlatch_.unlock_shared();
   
   {
     std::scoped_lock latch(*bpm_latch_);
-    frame_->pin_count_.fetch_sub(1);
-    replacer_->SetEvictable(frame_->frame_id_, true);
-    fmt::println(stderr, "DEBUG ReadPageGuard::Drop() called SetEvictable(true) for frame {}", frame_->frame_id_);
+    if (frame_->pin_count_.fetch_sub(1) == 1) {
+      replacer_->SetEvictable(frame_->frame_id_, true);
+    }
   }
   
   is_valid_ = false;
@@ -158,7 +153,6 @@ void ReadPageGuard::Drop() {
 
 /** @brief The destructor for `ReadPageGuard`. This destructor simply calls `Drop()`. */
 ReadPageGuard::~ReadPageGuard() {
-  fmt::println(stderr, "DEBUG ~ReadPageGuard() is_valid_={}, page_id={}", is_valid_, page_id_);
   Drop();
 }
 
@@ -291,26 +285,18 @@ void WritePageGuard::Flush() {
  * Gradescope tests. You may also want to take the buffer pool manager's latch in a very specific scenario...
  */
 void WritePageGuard::Drop() {
-  fmt::println(stderr, "DEBUG WritePageGuard::Drop() START is_valid_={}", is_valid_);
   if (!is_valid_) {
-    fmt::println(stderr, "DEBUG WritePageGuard::Drop() returning early: is_valid_=false");
     return;
   }
   
-  if (!frame_) {
-    fmt::println(stderr, "DEBUG WritePageGuard::Drop() ERROR: frame_ is null!");
-    return;
-  }
-  
-  fmt::println(stderr, "DEBUG WritePageGuard::Drop() page_id={}, frame_id={}", page_id_, frame_->frame_id_);
   frame_->is_dirty_ = true;
   frame_->rwlatch_.unlock();
   
   {
     std::scoped_lock latch(*bpm_latch_);
-    frame_->pin_count_.fetch_sub(1);
-    replacer_->SetEvictable(frame_->frame_id_, true);
-    fmt::println(stderr, "DEBUG WritePageGuard::Drop() called SetEvictable(true) for frame {}", frame_->frame_id_);
+    if (frame_->pin_count_.fetch_sub(1) == 1) {
+      replacer_->SetEvictable(frame_->frame_id_, true);
+    }
   }
   
   is_valid_ = false;
@@ -318,7 +304,6 @@ void WritePageGuard::Drop() {
 
 /** @brief The destructor for `WritePageGuard`. This destructor simply calls `Drop()`. */
 WritePageGuard::~WritePageGuard() { 
-  fmt::println(stderr, "DEBUG ~WritePageGuard() is_valid_={}, page_id={}", is_valid_, page_id_);
   Drop(); 
 }
 

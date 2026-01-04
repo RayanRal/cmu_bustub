@@ -221,6 +221,7 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
     auto frame = frames_[frame_id];
     frame->pin_count_.fetch_add(1);
     replacer_->RecordAccess(frame_id, page_id, access_type);
+    replacer_->SetEvictable(frame_id, false);
     return WritePageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
   }
   
@@ -231,19 +232,11 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
     free_frames_.pop_front();
   } else {
     // Case 3: Need to evict a page
-    fmt::println(stderr, "DEBUG CheckedWritePage: Trying to evict for page_id={}, num_pages_in_table={}", page_id, page_table_.size());
-    // Print which pages are currently in the page table
-    fmt::println(stderr, "  Pages in buffer: ", "");
-    for (const auto& [pid, fid] : page_table_) {
-      fmt::println(stderr, "    page {} in frame {}", pid, fid);
-    }
     auto evict_frame_id = replacer_->Evict();
     if (!evict_frame_id.has_value()) {
-      fmt::println(stderr, "DEBUG CheckedWritePage: Evict() returned nullopt for page_id={}", page_id);
       return std::nullopt;  // Out of memory
     }
     frame_id = evict_frame_id.value();
-    fmt::println(stderr, "DEBUG CheckedWritePage: Evicted frame {}", frame_id);
     
     // Flush and remove the evicted page from page table
     auto evicted_frame = frames_[frame_id];
@@ -325,6 +318,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
     auto frame = frames_[frame_id];
     frame->pin_count_.fetch_add(1);
     replacer_->RecordAccess(frame_id, page_id, access_type);
+    replacer_->SetEvictable(frame_id, false);
     return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
   }
   
@@ -422,7 +416,6 @@ auto BufferPoolManager::WritePage(page_id_t page_id, AccessType access_type) -> 
   auto guard_opt = CheckedWritePage(page_id, access_type);
 
   if (!guard_opt.has_value()) {
-    fmt::println(stderr, "\n`CheckedWritePage` failed to bring in page {}\n", page_id);
     std::abort();
   }
 
@@ -447,7 +440,6 @@ auto BufferPoolManager::ReadPage(page_id_t page_id, AccessType access_type) -> R
   auto guard_opt = CheckedReadPage(page_id, access_type);
 
   if (!guard_opt.has_value()) {
-    fmt::println(stderr, "\n`CheckedReadPage` failed to bring in page {}\n", page_id);
     std::abort();
   }
 

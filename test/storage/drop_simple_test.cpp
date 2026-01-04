@@ -1,6 +1,7 @@
 #include "buffer/buffer_pool_manager.h"
 #include "storage/disk/disk_manager_memory.h"
 #include "gtest/gtest.h"
+#include <thread>
 
 namespace bustub {
 
@@ -138,14 +139,17 @@ TEST(DropSimpleTest, MultiAccessSamePage) {
   
   // First access: pin page 0
   {
-    auto guard1 = bpm->WritePage(pid0);
+    auto guard1 = bpm->ReadPage(pid0);
     ASSERT_EQ(1, bpm->GetPinCount(pid0).value());
     
-    // While pinned, pin it again
-    {
-      auto guard2 = bpm->WritePage(pid0);
+    // While pinned, pin it again in another thread to avoid deadlock 
+    // (std::shared_mutex is not recursive for same thread)
+    std::thread t([&]() {
+      auto guard2 = bpm->ReadPage(pid0);
       ASSERT_EQ(2, bpm->GetPinCount(pid0).value());
-    }
+    });
+    t.join();
+
     // guard2 destroyed, pin count should go down
     ASSERT_EQ(1, bpm->GetPinCount(pid0).value());
   }
