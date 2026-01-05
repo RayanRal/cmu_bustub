@@ -356,9 +356,8 @@ void ArcReplacer::HandleCacheMiss(frame_id_t frame_id, page_id_t page_id) {
       ghost_map_.erase(mru_ghost_.back());
       mru_ghost_.pop_back();
     }
-  }
-  // Else if total size = 2 * replacer size, evict last from MFU ghost
-  else if (mru_size + mru_ghost_size + mfu_size + mfu_ghost_size == 2 * replacer_size_) {
+  } else if (mru_size + mru_ghost_size + mfu_size + mfu_ghost_size == 2 * replacer_size_) {
+    // Else if total size = 2 * replacer size, evict last from MFU ghost
     if (!mfu_ghost_.empty()) {
       auto ghost_status = ghost_map_[mfu_ghost_.back()];
       ghost_map_.erase(mfu_ghost_.back());

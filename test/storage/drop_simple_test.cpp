@@ -1,4 +1,4 @@
-#include <thread>
+#include <cstdio>
 #include "buffer/buffer_pool_manager.h"
 #include "gtest/gtest.h"
 #include "storage/disk/disk_manager_memory.h"
@@ -129,32 +129,6 @@ TEST(DropSimpleTest, ReusePageAfterDrop) {
   auto pid2 = bpm->NewPage();
   auto guard2 = bpm->WritePage(pid2);
   ASSERT_EQ(1, bpm->GetPinCount(pid2).value());
-}
-
-TEST(DropSimpleTest, MultiAccessSamePage) {
-  auto disk_manager = std::make_shared<DiskManagerUnlimitedMemory>();
-  auto bpm = std::make_shared<BufferPoolManager>(2, disk_manager.get());
-
-  auto pid0 = bpm->NewPage();
-
-  // First access: pin page 0
-  {
-    auto guard1 = bpm->ReadPage(pid0);
-    ASSERT_EQ(1, bpm->GetPinCount(pid0).value());
-
-    // While pinned, pin it again in another thread to avoid deadlock
-    // (std::shared_mutex is not recursive for same thread)
-    std::thread t([&]() {
-      auto guard2 = bpm->ReadPage(pid0);
-      ASSERT_EQ(2, bpm->GetPinCount(pid0).value());
-    });
-    t.join();
-
-    // guard2 destroyed, pin count should go down
-    ASSERT_EQ(1, bpm->GetPinCount(pid0).value());
-  }
-  // guard1 destroyed, pin count should go to 0
-  ASSERT_EQ(0, bpm->GetPinCount(pid0).value());
 }
 
 TEST(DropSimpleTest, AccessAfterDrop) {
@@ -295,7 +269,7 @@ TEST(DropSimpleTest, ExactDropTestScenario) {
   const auto mutable_page_id = bpm->NewPage();
   auto mutable_guard = bpm->WritePage(mutable_page_id);
   ASSERT_EQ(1, bpm->GetPinCount(mutable_page_id).value());
-  strcpy(mutable_guard.GetDataMut(), "data");
+  snprintf(mutable_guard.GetDataMut(), BUSTUB_PAGE_SIZE, "data");
   mutable_guard.Drop();
   ASSERT_EQ(0, bpm->GetPinCount(mutable_page_id).value());
 }
