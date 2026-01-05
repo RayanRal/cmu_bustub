@@ -141,23 +141,21 @@ void ReadPageGuard::Drop() {
   if (!is_valid_) {
     return;
   }
-  
+
   frame_->rwlatch_.unlock_shared();
-  
+
   {
     std::scoped_lock latch(*bpm_latch_);
     if (frame_->pin_count_.fetch_sub(1) == 1) {
       replacer_->SetEvictable(frame_->frame_id_, true);
     }
   }
-  
+
   is_valid_ = false;
 }
 
 /** @brief The destructor for `ReadPageGuard`. This destructor simply calls `Drop()`. */
-ReadPageGuard::~ReadPageGuard() {
-  Drop();
-}
+ReadPageGuard::~ReadPageGuard() { Drop(); }
 
 /**********************************************************************************************************************/
 /**********************************************************************************************************************/
@@ -294,23 +292,21 @@ void WritePageGuard::Drop() {
   if (!is_valid_) {
     return;
   }
-  
+
   frame_->is_dirty_ = true;
   frame_->rwlatch_.unlock();
-  
+
   {
     std::scoped_lock latch(*bpm_latch_);
     if (frame_->pin_count_.fetch_sub(1) == 1) {
       replacer_->SetEvictable(frame_->frame_id_, true);
     }
   }
-  
+
   is_valid_ = false;
 }
 
 /** @brief The destructor for `WritePageGuard`. This destructor simply calls `Drop()`. */
-WritePageGuard::~WritePageGuard() { 
-  Drop(); 
-}
+WritePageGuard::~WritePageGuard() { Drop(); }
 
 }  // namespace bustub

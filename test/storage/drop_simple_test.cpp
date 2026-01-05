@@ -1,7 +1,7 @@
-#include "buffer/buffer_pool_manager.h"
-#include "storage/disk/disk_manager_memory.h"
-#include "gtest/gtest.h"
 #include <thread>
+#include "buffer/buffer_pool_manager.h"
+#include "gtest/gtest.h"
+#include "storage/disk/disk_manager_memory.h"
 
 namespace bustub {
 
@@ -11,9 +11,9 @@ TEST(DropSimpleTest, SimpleWrite) {
 
   const auto pid = bpm->NewPage();
   auto guard = bpm->WritePage(pid);
-  
+
   ASSERT_EQ(1, bpm->GetPinCount(pid).value());
-  
+
   guard.Drop();
   ASSERT_EQ(0, bpm->GetPinCount(pid).value());
 }
@@ -24,12 +24,12 @@ TEST(DropSimpleTest, DoubleDrop) {
 
   const auto pid = bpm->NewPage();
   auto guard = bpm->WritePage(pid);
-  
+
   ASSERT_EQ(1, bpm->GetPinCount(pid).value());
-  
+
   guard.Drop();
   ASSERT_EQ(0, bpm->GetPinCount(pid).value());
-  
+
   guard.Drop();
   ASSERT_EQ(0, bpm->GetPinCount(pid).value());
 }
@@ -60,7 +60,7 @@ TEST(DropSimpleTest, VectorOfGuards) {
       ASSERT_EQ(1, bpm->GetPinCount(pid).value());
     }
   }
-  
+
   // All guards should be destroyed and unpinned
   for (auto pid : pids) {
     ASSERT_EQ(0, bpm->GetPinCount(pid).value());
@@ -81,12 +81,12 @@ TEST(DropSimpleTest, FillBufferPoolThenEvict) {
       ASSERT_EQ(1, bpm->GetPinCount(pid).value());
     }
   }
-  
+
   // All 3 guards should be destroyed and unpinned
   for (auto pid : pids) {
     ASSERT_EQ(0, bpm->GetPinCount(pid).value());
   }
-  
+
   // Now try to create a 4th page - should evict one
   auto pid4 = bpm->NewPage();
   auto guard4 = bpm->WritePage(pid4);
@@ -107,7 +107,7 @@ TEST(DropSimpleTest, ReusePageAfterDrop) {
   }
   // Guard destroyed, page 0 unpinned
   ASSERT_EQ(0, bpm->GetPinCount(pid0).value());
-  
+
   // Create page 1 in frame 1
   auto pid1 = bpm->NewPage();
   {
@@ -116,7 +116,7 @@ TEST(DropSimpleTest, ReusePageAfterDrop) {
   }
   // Guard destroyed, page 1 unpinned
   ASSERT_EQ(0, bpm->GetPinCount(pid1).value());
-  
+
   // Both frames are full with unpinned pages
   // Now try to access page 0 again (should find it in buffer)
   {
@@ -124,7 +124,7 @@ TEST(DropSimpleTest, ReusePageAfterDrop) {
     ASSERT_EQ(1, bpm->GetPinCount(pid0).value());
   }
   ASSERT_EQ(0, bpm->GetPinCount(pid0).value());
-  
+
   // Create page 2 - should evict one of the pages
   auto pid2 = bpm->NewPage();
   auto guard2 = bpm->WritePage(pid2);
@@ -136,13 +136,13 @@ TEST(DropSimpleTest, MultiAccessSamePage) {
   auto bpm = std::make_shared<BufferPoolManager>(2, disk_manager.get());
 
   auto pid0 = bpm->NewPage();
-  
+
   // First access: pin page 0
   {
     auto guard1 = bpm->ReadPage(pid0);
     ASSERT_EQ(1, bpm->GetPinCount(pid0).value());
-    
-    // While pinned, pin it again in another thread to avoid deadlock 
+
+    // While pinned, pin it again in another thread to avoid deadlock
     // (std::shared_mutex is not recursive for same thread)
     std::thread t([&]() {
       auto guard2 = bpm->ReadPage(pid0);
@@ -165,19 +165,19 @@ TEST(DropSimpleTest, AccessAfterDrop) {
   auto pid0 = bpm->NewPage();
   auto guard1 = bpm->WritePage(pid0);
   ASSERT_EQ(1, bpm->GetPinCount(pid0).value());
-  
+
   // Drop it explicitly
   guard1.Drop();
   ASSERT_EQ(0, bpm->GetPinCount(pid0).value());
-  
+
   // Access it again - should find in buffer
   auto guard2 = bpm->WritePage(pid0);
   ASSERT_EQ(1, bpm->GetPinCount(pid0).value());
-  
+
   // Drop again
   guard2.Drop();
   ASSERT_EQ(0, bpm->GetPinCount(pid0).value());
-  
+
   // The destructor will be called when guard1 and guard2 go out of scope
   // since they were invalidated by explicit Drop(), the destructors should be no-ops
 }
@@ -188,7 +188,7 @@ TEST(DropSimpleTest, SequentialPagesMultipleTimes) {
 
   auto pid1 = bpm->NewPage();
   auto pid2 = bpm->NewPage();
-  
+
   // First round: access pages
   {
     auto g1 = bpm->WritePage(pid1);
@@ -198,7 +198,7 @@ TEST(DropSimpleTest, SequentialPagesMultipleTimes) {
   }
   ASSERT_EQ(0, bpm->GetPinCount(pid1).value());
   ASSERT_EQ(0, bpm->GetPinCount(pid2).value());
-  
+
   // Second round: access pages again
   {
     auto g1 = bpm->WritePage(pid1);
@@ -208,7 +208,7 @@ TEST(DropSimpleTest, SequentialPagesMultipleTimes) {
   }
   ASSERT_EQ(0, bpm->GetPinCount(pid1).value());
   ASSERT_EQ(0, bpm->GetPinCount(pid2).value());
-  
+
   // Try to create a new page - should not evict from earlier accesses
   auto pid3 = bpm->NewPage();
   auto g3 = bpm->WritePage(pid3);
@@ -239,25 +239,30 @@ TEST(DropSimpleTest, ExactDropTestScenario) {
   {
     auto read_guarded_page = bpm->ReadPage(pid1);
     auto write_guarded_page = bpm->WritePage(pid2);
-    fmt::println(stderr, "  pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999), bpm->GetPinCount(pid2).value_or(999));
+    fmt::println(stderr, "  pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999),
+                 bpm->GetPinCount(pid2).value_or(999));
     ASSERT_EQ(1, bpm->GetPinCount(pid1).value());
     ASSERT_EQ(1, bpm->GetPinCount(pid2).value());
     read_guarded_page.Drop();
     write_guarded_page.Drop();
-    fmt::println(stderr, "  After drop: pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999), bpm->GetPinCount(pid2).value_or(999));
+    fmt::println(stderr, "  After drop: pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999),
+                 bpm->GetPinCount(pid2).value_or(999));
     ASSERT_EQ(0, bpm->GetPinCount(pid1).value());
     ASSERT_EQ(0, bpm->GetPinCount(pid2).value());
   }
-  fmt::println(stderr, "  After scope: pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999), bpm->GetPinCount(pid2).value_or(999));
+  fmt::println(stderr, "  After scope: pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999),
+               bpm->GetPinCount(pid2).value_or(999));
 
   // Part 3: Pin pages 1-2 again in temporary guards
   fmt::println(stderr, "\nDEBUG Part 3: Starting");
   {
     const auto write_test1 = bpm->WritePage(pid1);
     const auto write_test2 = bpm->WritePage(pid2);
-    fmt::println(stderr, "  pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999), bpm->GetPinCount(pid2).value_or(999));
+    fmt::println(stderr, "  pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999),
+                 bpm->GetPinCount(pid2).value_or(999));
   }
-  fmt::println(stderr, "  After scope: pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999), bpm->GetPinCount(pid2).value_or(999));
+  fmt::println(stderr, "  After scope: pin_count pid1={}, pid2={}", bpm->GetPinCount(pid1).value_or(999),
+               bpm->GetPinCount(pid2).value_or(999));
   // Destructors should have been called and pages unpinned
   ASSERT_EQ(0, bpm->GetPinCount(pid1).value());
   ASSERT_EQ(0, bpm->GetPinCount(pid2).value());
@@ -267,7 +272,7 @@ TEST(DropSimpleTest, ExactDropTestScenario) {
   fmt::println(stderr, "  pid0 pin count: {}", bpm->GetPinCount(pid0).value_or(999));
   fmt::println(stderr, "  pid1 pin count: {}", bpm->GetPinCount(pid1).value_or(999));
   fmt::println(stderr, "  pid2 pin count: {}", bpm->GetPinCount(pid2).value_or(999));
-  
+
   std::vector<page_id_t> page_ids;
   {
     std::vector<WritePageGuard> guards;

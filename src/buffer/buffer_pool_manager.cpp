@@ -115,9 +115,7 @@ auto BufferPoolManager::Size() const -> size_t { return num_frames_; }
  *
  * @return The page ID of the newly allocated page.
  */
-auto BufferPoolManager::NewPage() -> page_id_t {
-  return next_page_id_.fetch_add(1);
-}
+auto BufferPoolManager::NewPage() -> page_id_t { return next_page_id_.fetch_add(1); }
 
 /**
  * @brief Removes a page from the database, both on disk and in memory.
@@ -138,35 +136,35 @@ auto BufferPoolManager::NewPage() -> page_id_t {
  */
 auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   std::scoped_lock latch(*bpm_latch_);
-  
+
   auto page_it = page_table_.find(page_id);
   if (page_it == page_table_.end()) {
     // Page not in buffer pool, but deallocate from disk
     disk_scheduler_->DeallocatePage(page_id);
     return true;
   }
-  
+
   frame_id_t frame_id = page_it->second;
   auto frame = frames_[frame_id];
-  
+
   // Check if page is pinned
   if (frame->pin_count_.load() > 0) {
     return false;
   }
-  
+
   // Remove from page table
   page_table_.erase(page_it);
-  
+
   // Reset frame and add to free list
   frame->Reset();
   free_frames_.push_back(frame_id);
-  
+
   // Remove from replacer
   replacer_->Remove(frame_id);
-  
+
   // Deallocate from disk
   disk_scheduler_->DeallocatePage(page_id);
-  
+
   return true;
 }
 
@@ -651,12 +649,12 @@ void BufferPoolManager::FlushAllPages() {
  */
 auto BufferPoolManager::GetPinCount(page_id_t page_id) -> std::optional<size_t> {
   std::scoped_lock latch(*bpm_latch_);
-  
+
   auto it = page_table_.find(page_id);
   if (it == page_table_.end()) {
     return std::nullopt;
   }
-  
+
   frame_id_t frame_id = it->second;
   return frames_[frame_id]->pin_count_.load();
 }
