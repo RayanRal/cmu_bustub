@@ -190,9 +190,9 @@ TEST(DropSimpleTest, SequentialPagesMultipleTimes) {
 }
 
 TEST(DropSimpleTest, ExactDropTestScenario) {
-  const size_t FRAMES = 3;
+  const size_t frames = 3;
   auto disk_manager = std::make_shared<DiskManagerUnlimitedMemory>();
-  auto bpm = std::make_shared<BufferPoolManager>(FRAMES, disk_manager.get());
+  auto bpm = std::make_shared<BufferPoolManager>(frames, disk_manager.get());
 
   // Part 1: Create pages 0-2 and drop them
   const auto pid0 = bpm->NewPage();
