@@ -250,7 +250,7 @@ TEST(DropSimpleTest, ExactDropTestScenario) {
   std::vector<page_id_t> page_ids;
   {
     std::vector<WritePageGuard> guards;
-    for (size_t i = 0; i < FRAMES; i++) {
+    for (size_t i = 0; i < frames; i++) {
       fmt::println(stderr, "DEBUG: Part 4 iteration {}", i);
       const auto new_pid = bpm->NewPage();
       fmt::println(stderr, "  Created page {}", new_pid);
