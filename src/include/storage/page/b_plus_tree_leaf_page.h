@@ -82,6 +82,16 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto GetTombstoneAt(int index) const -> int;
   auto GetTombstoneCount() const -> int;
   void SetTombstoneCount(int count);
+  auto IsTombstone(int index) const -> bool;
+
+  // Operation helpers
+  auto Lookup(const KeyType &key, const KeyComparator &comparator) const -> int;
+  auto Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator) -> bool;
+  auto Remove(const KeyType &key, const KeyComparator &comparator) -> bool;
+  void MoveHalfTo(BPlusTreeLeafPage *recipient);
+  void MoveAllTo(BPlusTreeLeafPage *recipient);
+  void MoveFirstToEndOf(BPlusTreeLeafPage *recipient);
+  void MoveLastToFrontOf(BPlusTreeLeafPage *recipient);
 
   /**
    * @brief for test only return a string representing all keys in

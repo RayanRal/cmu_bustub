@@ -75,7 +75,7 @@ class Context {
 FULL_INDEX_TEMPLATE_ARGUMENTS_DEFN
 class BPlusTree {
   using InternalPage = BPlusTreeInternalPage<KeyType, page_id_t, KeyComparator>;
-  using LeafPage = BPlusTreeLeafPage<KeyType, ValueType, KeyComparator>;
+  using LeafPage = BPlusTreeLeafPage<KeyType, ValueType, KeyComparator, NumTombs>;
 
  public:
   explicit BPlusTree(std::string name, page_id_t header_page_id, BufferPoolManager *buffer_pool_manager,
@@ -127,6 +127,12 @@ class BPlusTree {
   void PrintTree(page_id_t page_id, const BPlusTreePage *page);
 
   auto ToPrintableBPlusTree(page_id_t root_id) -> PrintableBPlusTree;
+
+  // Helpers
+  auto FindLeafPage(const KeyType &key, Context &ctx, bool leftMost = false) -> const LeafPage *;
+  void InsertIntoParent(const KeyType &key, page_id_t value, page_id_t old_value, Context &ctx);
+  // Returns true if parent should split
+  // auto Split(BPlusTreePage *node) -> BPlusTreePage *; 
 
   // member variable
   std::string index_name_;

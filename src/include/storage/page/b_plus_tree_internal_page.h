@@ -66,6 +66,15 @@ class BPlusTreeInternalPage : public BPlusTreePage {
 
   void SetValueAt(int index, const ValueType &value);
 
+  // Operation helpers
+  auto Lookup(const KeyType &key, const KeyComparator &comparator) const -> ValueType;
+  void PopulateNewRoot(const ValueType &old_value, const KeyType &new_key, const ValueType &new_value);
+  void InsertNodeAfter(const ValueType &old_value, const KeyType &new_key, const ValueType &new_value);
+  void MoveHalfTo(BPlusTreeInternalPage *recipient);
+  void MoveAllTo(BPlusTreeInternalPage *recipient, const KeyType &middle_key);
+  void MoveFirstToEndOf(BPlusTreeInternalPage *recipient, const KeyType &middle_key);
+  void MoveLastToFrontOf(BPlusTreeInternalPage *recipient, const KeyType &middle_key);
+
   /**
    * @brief For test only, return a string representing all keys in
    * this internal page, formatted as "(key1,key2,key3,...)"
