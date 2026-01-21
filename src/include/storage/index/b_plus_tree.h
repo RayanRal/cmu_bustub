@@ -129,10 +129,13 @@ class BPlusTree {
   auto ToPrintableBPlusTree(page_id_t root_id) -> PrintableBPlusTree;
 
   // Helpers
-  auto FindLeafPage(const KeyType &key, Context &ctx, bool leftMost = false) -> const LeafPage *;
+  enum class Operation { SEARCH, INSERT, DELETE };
+
+  auto FindLeafPage(const KeyType &key, Operation op, Context &ctx, bool leftMost = false) -> const LeafPage *;
   void InsertIntoParent(const KeyType &key, page_id_t value, page_id_t old_value, Context &ctx);
-  // Returns true if parent should split
-  // auto Split(BPlusTreePage *node) -> BPlusTreePage *; 
+
+  auto IsSafeInsert(const BPlusTreePage *page) -> bool;
+  auto IsSafeRemove(const BPlusTreePage *page) -> bool;
 
   // member variable
   std::string index_name_;

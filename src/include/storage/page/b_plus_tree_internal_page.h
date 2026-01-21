@@ -13,6 +13,7 @@
 #pragma once
 
 #include <queue>
+#include <sstream>
 #include <string>
 
 #include "storage/page/b_plus_tree_page.h"
@@ -82,23 +83,16 @@ class BPlusTreeInternalPage : public BPlusTreePage {
    * @return The string representation of all keys in the current internal page
    */
   auto ToString() const -> std::string {
-    std::string kstr = "(";
-    bool first = true;
-
-    // First key of internal page is always invalid
+    std::stringstream ss;
+    ss << "(";
     for (int i = 1; i < GetSize(); i++) {
-      KeyType key = KeyAt(i);
-      if (first) {
-        first = false;
-      } else {
-        kstr.append(",");
+      if (i > 1) {
+        ss << ",";
       }
-
-      kstr.append(std::to_string(key.ToString()));
+      ss << KeyAt(i);
     }
-    kstr.append(")");
-
-    return kstr;
+    ss << ")";
+    return ss.str();
   }
 
  private:

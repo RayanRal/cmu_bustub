@@ -47,9 +47,9 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::Init(int max_size) {
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::GetTombstones() const -> std::vector<KeyType> {
   std::vector<KeyType> tombs;
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-    size_t key_idx = tombstones_[i];
-    if (static_cast<int>(key_idx) < GetSize()) {
+  for (int i = 0; i < num_tombstones_; ++i) {
+    int key_idx = tombstones_[i];
+    if (key_idx < GetSize()) {
       tombs.push_back(key_array_[key_idx]);
     }
   }
@@ -95,12 +95,67 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::SetTombstoneCount(int count) { num_tombstones_ 
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto B_PLUS_TREE_LEAF_PAGE_TYPE::IsTombstone(int index) const -> bool {
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-    if (static_cast<int>(tombstones_[i]) == index) {
+  for (int i = 0; i < num_tombstones_; ++i) {
+    if (tombstones_[i] == index) {
       return true;
     }
   }
   return false;
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::AddTombstone(int &key_idx) {
+  if (LEAF_PAGE_TOMB_CNT == 0) return;
+  if (num_tombstones_ == LEAF_PAGE_TOMB_CNT) {
+    int victim_idx = HandleTombstoneOverflow();
+    if (key_idx > victim_idx) {
+      key_idx--;
+    }
+  }
+  tombstones_[num_tombstones_++] = key_idx;
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::RemoveTombstone(int key_idx) {
+  for (int i = 0; i < num_tombstones_; ++i) {
+    if (tombstones_[i] == key_idx) {
+      for (int j = i; j < num_tombstones_ - 1; ++j) {
+        tombstones_[j] = tombstones_[j + 1];
+      }
+      num_tombstones_--;
+      return;
+    }
+  }
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+void B_PLUS_TREE_LEAF_PAGE_TYPE::ShiftTombstones(int start_idx, int delta) {
+  for (int i = 0; i < num_tombstones_; ++i) {
+    if (tombstones_[i] >= start_idx) {
+      tombstones_[i] += delta;
+    }
+  }
+}
+
+FULL_INDEX_TEMPLATE_ARGUMENTS
+auto B_PLUS_TREE_LEAF_PAGE_TYPE::HandleTombstoneOverflow() -> int {
+  int victim_idx = tombstones_[0];
+  // Physically remove victim from key/rid arrays
+  for (int i = victim_idx; i < GetSize() - 1; ++i) {
+    key_array_[i] = key_array_[i + 1];
+    rid_array_[i] = rid_array_[i + 1];
+  }
+  ChangeSizeBy(-1);
+
+  // Shift all tombstones in list
+  for (int i = 0; i < num_tombstones_ - 1; ++i) {
+    tombstones_[i] = tombstones_[i + 1];
+    if (tombstones_[i] > victim_idx) {
+      tombstones_[i]--;
+    }
+  }
+  num_tombstones_--;
+  return victim_idx;
 }
 
 /**
@@ -141,16 +196,11 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &val
     int cmp = comparator(key_array_[mid], key);
     if (cmp == 0) {
       // Duplicate found. Check tombstone.
-      for (size_t i = 0; i < num_tombstones_; ++i) {
-        if (static_cast<int>(tombstones_[i]) == mid) {
-          // Resurrect: remove from tombstones, update value.
-          for (size_t j = i; j < num_tombstones_ - 1; ++j) {
-            tombstones_[j] = tombstones_[j + 1];
-          }
-          num_tombstones_--;
-          rid_array_[mid] = value;  // Update value
-          return true;
-        }
+      if (IsTombstone(mid)) {
+        // Resurrect: remove from tombstones, update value.
+        RemoveTombstone(mid);
+        rid_array_[mid] = value;  // Update value
+        return true;
       }
       return false;  // Duplicate and not tombstoned
     }
@@ -180,11 +230,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Insert(const KeyType &key, const ValueType &val
   ChangeSizeBy(1);
 
   // 3. Update tombstones: any index >= target must be incremented
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-    if (static_cast<int>(tombstones_[i]) >= target) {
-      tombstones_[i]++;
-    }
-  }
+  ShiftTombstones(target, 1);
 
   return true;
 }
@@ -201,10 +247,8 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(const KeyType &key, const KeyComparator 
   }
 
   // Check if already tombstoned
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-    if (static_cast<int>(tombstones_[i]) == target) {
-      return true;  // Already deleted
-    }
+  if (IsTombstone(target)) {
+    return true;  // Already deleted
   }
 
   if (LEAF_PAGE_TOMB_CNT == 0) {
@@ -213,46 +257,12 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Remove(const KeyType &key, const KeyComparator 
       rid_array_[i] = rid_array_[i + 1];
     }
     ChangeSizeBy(-1);
+    // Adjust tombstones
+    ShiftTombstones(target, -1);
     return true;
   }
 
-  if (num_tombstones_ < LEAF_PAGE_TOMB_CNT) {
-    // Space available in tombstone buffer
-    tombstones_[num_tombstones_++] = target;
-    return true;
-  }
-
-  // Buffer full: Physically remove the oldest tombstoned key
-  int victim_idx = tombstones_[0];
-
-  // Remove victim from tombstones list (shift left)
-  for (size_t i = 0; i < num_tombstones_ - 1; ++i) {
-    tombstones_[i] = tombstones_[i + 1];
-  }
-  
-  // Physically remove victim from key/rid arrays
-  for (int i = victim_idx; i < GetSize() - 1; ++i) {
-    key_array_[i] = key_array_[i + 1];
-    rid_array_[i] = rid_array_[i + 1];
-  }
-  ChangeSizeBy(-1);
-
-  // Update indices
-  // The key we wanted to remove (`target`) might have shifted if it was after `victim_idx`
-  if (target > victim_idx) {
-    target--;
-  }
-
-  // Existing tombstones (which are now at indices 0 to Max-2) might need adjustment
-  for (size_t i = 0; i < num_tombstones_ - 1; ++i) {
-    if (static_cast<int>(tombstones_[i]) > victim_idx) {
-      tombstones_[i]--;
-    }
-  }
-
-  // Add the new tombstone at the end
-  tombstones_[num_tombstones_ - 1] = target;
-
+  AddTombstone(target);
   return true;
 }
 
@@ -279,33 +289,17 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveHalfTo(BPlusTreeLeafPage *recipient) {
   SetSize(keep);
 
   // Handle tombstones
-  
-  // Temp buffer for recipient tombstones to ensure order
-  std::vector<int> recipient_tombs;
-  // Temp buffer for this tombstones
-  std::vector<int> this_tombs;
-
-  for (size_t i = 0; i < num_tombstones_; ++i) {
+  int new_num_tombstones = 0;
+  for (int i = 0; i < num_tombstones_; ++i) {
     int t_idx = tombstones_[i];
     if (t_idx < start_idx) {
-      // Stays in this
-      this_tombs.push_back(t_idx);
+      tombstones_[new_num_tombstones++] = t_idx;
     } else {
-      // Moves to recipient
-      recipient_tombs.push_back(t_idx - start_idx);
+      int adjusted_idx = t_idx - start_idx;
+      recipient->AddTombstone(adjusted_idx);
     }
   }
-
-  // Write back
-  num_tombstones_ = this_tombs.size();
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-    tombstones_[i] = this_tombs[i];
-  }
-
-  recipient->SetTombstoneCount(recipient_tombs.size());
-  for (size_t i = 0; i < recipient_tombs.size(); ++i) {
-    recipient->SetTombstoneAt(i, recipient_tombs[i]);
-  }
+  num_tombstones_ = new_num_tombstones;
 }
 
 /**
@@ -324,43 +318,13 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveAllTo(BPlusTreeLeafPage *recipient) {
   recipient->SetNextPageId(GetNextPageId()); 
 
   // Merge tombstones
-  std::vector<int> adjusted_tombs;
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-    adjusted_tombs.push_back(tombstones_[i] + start_offset);
-  }
-
-  std::vector<int> combined_tombs;
-  for (int i = 0; i < recipient->GetTombstoneCount(); ++i) {
-    combined_tombs.push_back(recipient->GetTombstoneAt(i));
-  }
-
-  // Append `this` tombstones
-  combined_tombs.insert(combined_tombs.end(), adjusted_tombs.begin(), adjusted_tombs.end());
-
-  // Handle overflow (physically remove oldest)
-  while (combined_tombs.size() > LEAF_PAGE_TOMB_CNT) {
-    int victim_idx = combined_tombs[0];
-    combined_tombs.erase(combined_tombs.begin());
-
-    // Physically remove from recipient
-    for (int i = victim_idx; i < recipient->GetSize() - 1; ++i) {
-      recipient->SetKeyAt(i, recipient->KeyAt(i + 1));
-      recipient->SetValueAt(i, recipient->ValueAt(i + 1));
+  for (int i = 0; i < num_tombstones_; ++i) {
+    int adjusted_idx = tombstones_[i] + start_offset;
+    int old_size = recipient->GetSize();
+    recipient->AddTombstone(adjusted_idx);
+    if (recipient->GetSize() < old_size) {
+      start_offset--;
     }
-    recipient->ChangeSizeBy(-1);
-
-    // Adjust indices
-    for (size_t i = 0; i < combined_tombs.size(); ++i) {
-      if (combined_tombs[i] > victim_idx) {
-        combined_tombs[i]--;
-      }
-    }
-  }
-
-  // Write back to recipient
-  recipient->SetTombstoneCount(combined_tombs.size());
-  for (size_t i = 0; i < combined_tombs.size(); ++i) {
-    recipient->SetTombstoneAt(i, combined_tombs[i]);
   }
 
   SetSize(0);
@@ -371,26 +335,8 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveFirstToEndOf(BPlusTreeLeafPage *recipient) {
   KeyType key = KeyAt(0);
   ValueType val = ValueAt(0);
-  
-  // Recipient appends
-  int dest_idx = recipient->GetSize();
-  recipient->SetKeyAt(dest_idx, key);
-  recipient->SetValueAt(dest_idx, val);
-  recipient->ChangeSizeBy(1);
-  
-  // Tombstone handling for moved key
-  // Check if index 0 is in tombstones
-  bool moved_tomb = false;
-  int t_idx_in_tomb_list = -1;
-  
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-    if (static_cast<int>(tombstones_[i]) == 0) {
-      moved_tomb = true;
-      t_idx_in_tomb_list = i;
-      break;
-    }
-  }
-  
+  bool is_tomb = IsTombstone(0);
+
   // Remove 0 from this (shift)
   for (int i = 0; i < GetSize() - 1; ++i) {
     SetKeyAt(i, KeyAt(i+1));
@@ -399,45 +345,19 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveFirstToEndOf(BPlusTreeLeafPage *recipient) 
   ChangeSizeBy(-1);
   
   // Adjust this tombstones
-  if (moved_tomb) {
-      // Remove from list
-      for (size_t i = t_idx_in_tomb_list; i < num_tombstones_ - 1; ++i) {
-          tombstones_[i] = tombstones_[i+1];
-      }
-      num_tombstones_--;
+  if (is_tomb) {
+      RemoveTombstone(0);
   }
+  ShiftTombstones(0, -1);
   
-  // Decrement all remaining tombstone indices
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-      tombstones_[i]--;
-  }
+  // Recipient appends
+  int dest_idx = recipient->GetSize();
+  recipient->SetKeyAt(dest_idx, key);
+  recipient->SetValueAt(dest_idx, val);
+  recipient->ChangeSizeBy(1);
   
-  // If moved key was tombstoned, add to recipient tombstones
-  if (moved_tomb) {
-     // Recipient tombstones vector
-     std::vector<int> r_tombs;
-     for(int i=0; i<recipient->GetTombstoneCount(); ++i) r_tombs.push_back(recipient->GetTombstoneAt(i));
-     
-     r_tombs.push_back(dest_idx); // New index in recipient
-     
-     // Handle overflow in recipient
-     while (r_tombs.size() > LEAF_PAGE_TOMB_CNT) {
-        int victim = r_tombs[0];
-        r_tombs.erase(r_tombs.begin());
-        // Physically remove
-        for (int i = victim; i < recipient->GetSize() - 1; ++i) {
-            recipient->SetKeyAt(i, recipient->KeyAt(i+1));
-            recipient->SetValueAt(i, recipient->ValueAt(i+1));
-        }
-        recipient->ChangeSizeBy(-1);
-        
-        for(size_t i=0; i<r_tombs.size(); ++i) {
-            if (r_tombs[i] > victim) r_tombs[i]--;
-        }
-     }
-     
-     recipient->SetTombstoneCount(r_tombs.size());
-     for(size_t i=0; i<r_tombs.size(); ++i) recipient->SetTombstoneAt(i, r_tombs[i]);
+  if (is_tomb) {
+     recipient->AddTombstone(dest_idx);
   }
 }
 
@@ -446,6 +366,13 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveLastToFrontOf(BPlusTreeLeafPage *recipient)
   int src_idx = GetSize() - 1;
   KeyType key = KeyAt(src_idx);
   ValueType val = ValueAt(src_idx);
+  bool is_tomb = IsTombstone(src_idx);
+  
+  // Remove from this
+  ChangeSizeBy(-1);
+  if (is_tomb) {
+      RemoveTombstone(src_idx);
+  }
   
   // Recipient prepends (Insert at 0)
   for (int i = recipient->GetSize(); i > 0; --i) {
@@ -457,57 +384,11 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveLastToFrontOf(BPlusTreeLeafPage *recipient)
   recipient->ChangeSizeBy(1);
   
   // Recipient tombstones adjust (increment all)
-  for (int i = 0; i < recipient->GetTombstoneCount(); ++i) {
-      recipient->SetTombstoneAt(i, recipient->GetTombstoneAt(i) + 1);
-  }
+  recipient->ShiftTombstones(0, 1);
   
-  // Check if moved key is tombstoned in this
-  bool moved_tomb = false;
-  int t_idx_in_tomb_list = -1;
-  for (size_t i = 0; i < num_tombstones_; ++i) {
-    if (static_cast<int>(tombstones_[i]) == src_idx) {
-      moved_tomb = true;
-      t_idx_in_tomb_list = i;
-      break;
-    }
-  }
-  
-  // Remove from this
-  ChangeSizeBy(-1);
-  if (moved_tomb) {
-      for (size_t i = t_idx_in_tomb_list; i < num_tombstones_ - 1; ++i) {
-          tombstones_[i] = tombstones_[i+1];
-      }
-      num_tombstones_--;
-  }
-  
-  // No index adjustment needed for this as we removed last.
-  
-  // Add to recipient if needed
-  if (moved_tomb) {
-     // Add 0 to recipient tombstones.
-     std::vector<int> r_tombs;
-     for(int i=0; i<recipient->GetTombstoneCount(); ++i) r_tombs.push_back(recipient->GetTombstoneAt(i));
-     r_tombs.push_back(0);
-     
-     // Handle overflow
-     while (r_tombs.size() > LEAF_PAGE_TOMB_CNT) {
-        int victim = r_tombs[0];
-        r_tombs.erase(r_tombs.begin());
-        // Physically remove
-        for (int i = victim; i < recipient->GetSize() - 1; ++i) {
-            recipient->SetKeyAt(i, recipient->KeyAt(i+1));
-            recipient->SetValueAt(i, recipient->ValueAt(i+1));
-        }
-        recipient->ChangeSizeBy(-1);
-        
-        for(size_t i=0; i<r_tombs.size(); ++i) {
-            if (r_tombs[i] > victim) r_tombs[i]--;
-        }
-     }
-     
-     recipient->SetTombstoneCount(r_tombs.size());
-     for(size_t i=0; i<r_tombs.size(); ++i) recipient->SetTombstoneAt(i, r_tombs[i]);
+  if (is_tomb) {
+     int dest_idx = 0;
+     recipient->AddTombstone(dest_idx);
   }
 }
 
