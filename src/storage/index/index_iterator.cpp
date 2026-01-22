@@ -13,8 +13,6 @@
 /**
  * index_iterator.cpp
  */
-#include <cassert>
-
 #include "storage/index/index_iterator.h"
 
 namespace bustub {
@@ -29,81 +27,79 @@ INDEXITERATOR_TYPE::IndexIterator() = default;
 FULL_INDEX_TEMPLATE_ARGUMENTS
 INDEXITERATOR_TYPE::IndexIterator(TracedBufferPoolManager *bpm, ReadPageGuard guard, int index, page_id_t page_id)
     : bpm_(bpm), guard_(std::move(guard)), page_id_(page_id), index_(index) {
-    // Skip tombstones initially
-    while (page_id_ != INVALID_PAGE_ID) {
-        auto leaf = guard_.As<LeafPage>();
-        if (index_ >= leaf->GetSize()) {
-             // Move to next page
-             page_id_t next_page_id = leaf->GetNextPageId();
-             guard_ = ReadPageGuard();
-             
-             if (next_page_id != INVALID_PAGE_ID) {
-                 guard_ = bpm_->ReadPage(next_page_id);
-                 page_id_ = next_page_id;
-                 index_ = 0;
-                 continue; // Check again for new page
-             } else {
-                 page_id_ = INVALID_PAGE_ID;
-                 index_ = 0;
-                 break;
-             }
-        }
-        
-        if (leaf->IsTombstone(index_)) {
-            index_++;
-        } else {
-            break; // Found valid key
-        }
+  // Skip tombstones initially
+  while (page_id_ != INVALID_PAGE_ID) {
+    auto leaf = guard_.As<LeafPage>();
+    if (index_ >= leaf->GetSize()) {
+      // Move to next page
+      page_id_t next_page_id = leaf->GetNextPageId();
+      guard_ = ReadPageGuard();
+
+      if (next_page_id != INVALID_PAGE_ID) {
+        guard_ = bpm_->ReadPage(next_page_id);
+        page_id_ = next_page_id;
+        index_ = 0;
+        continue;  // Check again for new page
+      } else {
+        page_id_ = INVALID_PAGE_ID;
+        index_ = 0;
+        break;
+      }
     }
+
+    if (leaf->IsTombstone(index_)) {
+      index_++;
+    } else {
+      break;  // Found valid key
+    }
+  }
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 INDEXITERATOR_TYPE::~IndexIterator() = default;  // NOLINT
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto INDEXITERATOR_TYPE::IsEnd() -> bool {
-    return page_id_ == INVALID_PAGE_ID;
-}
+auto INDEXITERATOR_TYPE::IsEnd() -> bool { return page_id_ == INVALID_PAGE_ID; }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto INDEXITERATOR_TYPE::operator*() -> std::pair<const KeyType &, const ValueType &> {
-    auto leaf = guard_.As<LeafPage>();
-    return {leaf->KeyAt(index_), leaf->ValueAt(index_)};
+  auto leaf = guard_.As<LeafPage>();
+  return {leaf->KeyAt(index_), leaf->ValueAt(index_)};
 }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
-    index_++;
-    
-    // Skip tombstones and move pages
-    while (page_id_ != INVALID_PAGE_ID) {
-        auto leaf = guard_.As<LeafPage>();
-        
-        if (index_ >= leaf->GetSize()) {
-             // Move to next page
-             page_id_t next_page_id = leaf->GetNextPageId();
-             guard_ = ReadPageGuard();
-             
-             if (next_page_id != INVALID_PAGE_ID) {
-                 guard_ = bpm_->ReadPage(next_page_id);
-                 page_id_ = next_page_id;
-                 index_ = 0;
-                 continue;
-             } else {
-                 page_id_ = INVALID_PAGE_ID;
-                 index_ = 0;
-                 break;
-             }
-        }
-        
-        if (leaf->IsTombstone(index_)) {
-            index_++;
-        } else {
-            break; // Found valid key
-        }
+  index_++;
+
+  // Skip tombstones and move pages
+  while (page_id_ != INVALID_PAGE_ID) {
+    auto leaf = guard_.As<LeafPage>();
+
+    if (index_ >= leaf->GetSize()) {
+      // Move to next page
+      page_id_t next_page_id = leaf->GetNextPageId();
+      guard_ = ReadPageGuard();
+
+      if (next_page_id != INVALID_PAGE_ID) {
+        guard_ = bpm_->ReadPage(next_page_id);
+        page_id_ = next_page_id;
+        index_ = 0;
+        continue;
+      } else {
+        page_id_ = INVALID_PAGE_ID;
+        index_ = 0;
+        break;
+      }
     }
-    
-    return *this;
+
+    if (leaf->IsTombstone(index_)) {
+      index_++;
+    } else {
+      break;  // Found valid key
+    }
+  }
+
+  return *this;
 }
 
 template class IndexIterator<GenericKey<4>, RID, GenericComparator<4>>;

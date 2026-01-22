@@ -1,7 +1,7 @@
 #include "storage/page/b_plus_tree_internal_page.h"
+#include <test_util.h>
 #include "gtest/gtest.h"
 #include "storage/index/generic_key.h"
-#include "test_util.h"
 
 namespace bustub {
 
@@ -46,14 +46,14 @@ TEST(BPlusTreeInternalPageTest, LookupTest) {
   char buf[BUSTUB_PAGE_SIZE];
   auto *internal_page = reinterpret_cast<BPlusTreeInternalPage<GenericKey<8>, page_id_t, GenericComparator<8>> *>(buf);
   internal_page->Init(10);
-  
+
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
 
   // Setup:
   // P0 | K1 | P1 | K2 | P2 | K3 | P3
   // Values: P0=100, K1=10, P1=101, K2=20, P2=102, K3=30, P3=103
-  
+
   GenericKey<8> k1, k2, k3;
   k1.SetFromInteger(10);
   k2.SetFromInteger(20);
@@ -67,7 +67,7 @@ TEST(BPlusTreeInternalPageTest, LookupTest) {
   internal_page->SetValueAt(1, 101);
   internal_page->SetValueAt(2, 102);
   internal_page->SetValueAt(3, 103);
-  
+
   internal_page->SetSize(4);
 
   // Lookup 5 ( < 10 ) -> P0
@@ -106,7 +106,7 @@ TEST(BPlusTreeInternalPageTest, PopulateNewRootTest) {
 
   GenericKey<8> key;
   key.SetFromInteger(50);
-  
+
   // New Root: [OldValue] Key [NewValue]
   internal_page->PopulateNewRoot(100, key, 101);
 
@@ -121,9 +121,9 @@ TEST(BPlusTreeInternalPageTest, MoveHalfToTest) {
   char buf2[BUSTUB_PAGE_SIZE];
   auto *page1 = reinterpret_cast<BPlusTreeInternalPage<GenericKey<8>, page_id_t, GenericComparator<8>> *>(buf1);
   auto *page2 = reinterpret_cast<BPlusTreeInternalPage<GenericKey<8>, page_id_t, GenericComparator<8>> *>(buf2);
-  
+
   page1->Init(10);
-  page2->Init(10); // Recipient
+  page2->Init(10);  // Recipient
 
   GenericKey<8> key;
 
@@ -151,7 +151,6 @@ TEST(BPlusTreeInternalPageTest, MoveHalfToTest) {
 
   // Verify Page 2 content
 
-  
   EXPECT_EQ(page2->ValueAt(0), 103);
   EXPECT_EQ(page2->KeyAt(1).GetAsInteger(), 40);
   EXPECT_EQ(page2->ValueAt(1), 104);
@@ -171,12 +170,16 @@ TEST(BPlusTreeInternalPageTest, MoveAllToTest) {
   GenericKey<8> key;
   // Page 2 (Recipient): P0=200, K1=10, P1=201
   page2->SetValueAt(0, 200);
-  key.SetFromInteger(10); page2->SetKeyAt(1, key); page2->SetValueAt(1, 201);
+  key.SetFromInteger(10);
+  page2->SetKeyAt(1, key);
+  page2->SetValueAt(1, 201);
   page2->SetSize(2);
 
   // Page 1 (Source): P0=202, K1=30, P1=203
   page1->SetValueAt(0, 202);
-  key.SetFromInteger(30); page1->SetKeyAt(1, key); page1->SetValueAt(1, 203);
+  key.SetFromInteger(30);
+  page1->SetKeyAt(1, key);
+  page1->SetValueAt(1, 203);
   page1->SetSize(2);
 
   // Merge. Middle Key = 20 (Separating Page 2 and Page 1)
@@ -191,7 +194,7 @@ TEST(BPlusTreeInternalPageTest, MoveAllToTest) {
   EXPECT_EQ(page2->ValueAt(0), 200);
   EXPECT_EQ(page2->KeyAt(1).GetAsInteger(), 10);
   EXPECT_EQ(page2->ValueAt(1), 201);
-  EXPECT_EQ(page2->KeyAt(2).GetAsInteger(), 20); // Middle key becomes valid key
+  EXPECT_EQ(page2->KeyAt(2).GetAsInteger(), 20);  // Middle key becomes valid key
   EXPECT_EQ(page2->ValueAt(2), 202);
   EXPECT_EQ(page2->KeyAt(3).GetAsInteger(), 30);
   EXPECT_EQ(page2->ValueAt(3), 203);
@@ -209,12 +212,16 @@ TEST(BPlusTreeInternalPageTest, MoveFirstToEndOfTest) {
   GenericKey<8> key;
   // Page 2 (Recipient - Left): P0=200, K1=10, P1=201
   page2->SetValueAt(0, 200);
-  key.SetFromInteger(10); page2->SetKeyAt(1, key); page2->SetValueAt(1, 201);
+  key.SetFromInteger(10);
+  page2->SetKeyAt(1, key);
+  page2->SetValueAt(1, 201);
   page2->SetSize(2);
 
   // Page 1 (Source - Right): P0=202, K1=30, P1=203
   page1->SetValueAt(0, 202);
-  key.SetFromInteger(30); page1->SetKeyAt(1, key); page1->SetValueAt(1, 203);
+  key.SetFromInteger(30);
+  page1->SetKeyAt(1, key);
+  page1->SetValueAt(1, 203);
   page1->SetSize(2);
 
   key.SetFromInteger(20);
@@ -244,12 +251,16 @@ TEST(BPlusTreeInternalPageTest, MoveLastToFrontOfTest) {
   GenericKey<8> key;
   // Page 1 (Source - Left): P0=200, K1=10, P1=201
   page1->SetValueAt(0, 200);
-  key.SetFromInteger(10); page1->SetKeyAt(1, key); page1->SetValueAt(1, 201);
+  key.SetFromInteger(10);
+  page1->SetKeyAt(1, key);
+  page1->SetValueAt(1, 201);
   page1->SetSize(2);
 
   // Page 2 (Recipient - Right): P0=202, K1=30, P1=203
   page2->SetValueAt(0, 202);
-  key.SetFromInteger(30); page2->SetKeyAt(1, key); page2->SetValueAt(1, 203);
+  key.SetFromInteger(30);
+  page2->SetKeyAt(1, key);
+  page2->SetValueAt(1, 203);
   page2->SetSize(2);
 
   // Move Last of Page 1 to Front of Page 2
@@ -260,16 +271,16 @@ TEST(BPlusTreeInternalPageTest, MoveLastToFrontOfTest) {
   // Result:
   // Page 1: Size 1. P0=200. K1=10 removed.
   // Page 2: Size 3. P0=201 (Moved from P1 of Page1). K1=20 (Middle). P1=202 (Old P0). K2=30. P2=203.
-  
+
   EXPECT_EQ(page1->GetSize(), 1);
   EXPECT_EQ(page1->ValueAt(0), 200);
 
   EXPECT_EQ(page2->GetSize(), 3);
   EXPECT_EQ(page2->ValueAt(0), 201);
-  EXPECT_EQ(page2->KeyAt(1).GetAsInteger(), 20); // Middle key inserted
+  EXPECT_EQ(page2->KeyAt(1).GetAsInteger(), 20);  // Middle key inserted
   EXPECT_EQ(page2->ValueAt(1), 202);
   EXPECT_EQ(page2->KeyAt(2).GetAsInteger(), 30);
   EXPECT_EQ(page2->ValueAt(2), 203);
 }
 
-} // namespace bustub
+}  // namespace bustub

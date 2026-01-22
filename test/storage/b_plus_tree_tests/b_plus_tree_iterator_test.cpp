@@ -1,8 +1,8 @@
-#include "storage/index/b_plus_tree.h"
+#include <test_util.h>
 #include "buffer/buffer_pool_manager.h"
-#include "storage/disk/disk_manager_memory.h"
 #include "gtest/gtest.h"
-#include "test_util.h"
+#include "storage/disk/disk_manager_memory.h"
+#include "storage/index/b_plus_tree.h"
 
 namespace bustub {
 
@@ -22,7 +22,8 @@ TEST(BPlusTreeIteratorTest, IteratorTest) {
 
   // Insert 1..10
   for (int i = 1; i <= 10; ++i) {
-    key.SetFromInteger(i); rid.Set(1, i);
+    key.SetFromInteger(i);
+    rid.Set(1, i);
     tree.Insert(key, rid);
   }
 
@@ -46,7 +47,7 @@ TEST(BPlusTreeIteratorTest, IteratorTest) {
   key.SetFromInteger(5);
   auto it5 = tree.Begin(key);
   EXPECT_EQ((*it5).first.GetAsInteger(), 5);
-  
+
   // key = 0 (Smaller than min). Should point to 1.
   key.SetFromInteger(0);
   auto it0 = tree.Begin(key);
@@ -61,4 +62,4 @@ TEST(BPlusTreeIteratorTest, IteratorTest) {
   delete bpm;
 }
 
-} // namespace bustub
+}  // namespace bustub

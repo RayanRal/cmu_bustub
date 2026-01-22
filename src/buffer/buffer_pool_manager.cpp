@@ -433,16 +433,17 @@ auto BufferPoolManager::WritePage(page_id_t page_id, AccessType access_type) -> 
     std::cerr << "Requested Page: " << page_id << std::endl;
     std::cerr << "Frame State:" << std::endl;
     for (size_t i = 0; i < num_frames_; ++i) {
-        auto frame = frames_[i];
-        page_id_t pid = INVALID_PAGE_ID;
-        // Find page id
-        for (const auto& pair : page_table_) {
-            if (pair.second == static_cast<frame_id_t>(i)) {
-                pid = pair.first;
-                break;
-            }
+      auto frame = frames_[i];
+      page_id_t pid = INVALID_PAGE_ID;
+      // Find page id
+      for (const auto &pair : page_table_) {
+        if (pair.second == static_cast<frame_id_t>(i)) {
+          pid = pair.first;
+          break;
         }
-        std::cerr << "Frame " << i << ": Page " << pid << ", Pin " << frame->pin_count_.load() << ", Dirty " << frame->is_dirty_ << std::endl;
+      }
+      std::cerr << "Frame " << i << ": Page " << pid << ", Pin " << frame->pin_count_.load() << ", Dirty "
+                << frame->is_dirty_ << std::endl;
     }
     std::abort();
   }

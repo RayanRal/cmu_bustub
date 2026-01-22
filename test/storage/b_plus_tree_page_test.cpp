@@ -1,9 +1,9 @@
 #include "storage/page/b_plus_tree_page.h"
-#include "storage/page/b_plus_tree_internal_page.h"
-#include "storage/page/b_plus_tree_leaf_page.h"
-#include "storage/index/generic_key.h"
 #include "common/rid.h"
 #include "gtest/gtest.h"
+#include "storage/index/generic_key.h"
+#include "storage/page/b_plus_tree_internal_page.h"
+#include "storage/page/b_plus_tree_leaf_page.h"
 
 namespace bustub {
 
@@ -77,14 +77,14 @@ TEST(BPlusTreePageTest, LeafPageTombstoneTest) {
   leaf_page->SetSize(3);
 
   // Set tombstones
-  leaf_page->SetTombstoneAt(0, 1); // Tombstone points to key at index 1 (20)
+  leaf_page->SetTombstoneAt(0, 1);  // Tombstone points to key at index 1 (20)
   leaf_page->SetTombstoneCount(1);
 
   auto tombstones = leaf_page->GetTombstones();
   ASSERT_EQ(tombstones.size(), 1);
   EXPECT_EQ(tombstones[0].GetAsInteger(), 20);
 
-  leaf_page->SetTombstoneAt(1, 0); // Tombstone points to key at index 0 (10)
+  leaf_page->SetTombstoneAt(1, 0);  // Tombstone points to key at index 0 (10)
   leaf_page->SetTombstoneCount(2);
 
   tombstones = leaf_page->GetTombstones();
@@ -93,10 +93,10 @@ TEST(BPlusTreePageTest, LeafPageTombstoneTest) {
   EXPECT_EQ(tombstones[1].GetAsInteger(), 10);
 
   // Test bound check (if tombstone points to invalid index, e.g. >= size)
-  leaf_page->SetTombstoneAt(1, 5); // Index 5 is out of bounds (Size is 3)
+  leaf_page->SetTombstoneAt(1, 5);  // Index 5 is out of bounds (Size is 3)
   tombstones = leaf_page->GetTombstones();
   ASSERT_EQ(tombstones.size(), 1);
   EXPECT_EQ(tombstones[0].GetAsInteger(), 20);
 }
 
-} // namespace bustub
+}  // namespace bustub

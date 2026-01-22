@@ -1,8 +1,8 @@
-#include "storage/index/b_plus_tree.h"
+#include <test_util.h>
 #include "buffer/buffer_pool_manager.h"
-#include "storage/disk/disk_manager_memory.h"
 #include "gtest/gtest.h"
-#include "test_util.h"
+#include "storage/disk/disk_manager_memory.h"
+#include "storage/index/b_plus_tree.h"
 
 namespace bustub {
 
@@ -22,7 +22,7 @@ TEST(BPlusTreeInsertStrategyTest, SingleInsertTest) {
   rid.Set(1, 1);
 
   EXPECT_TRUE(tree.Insert(key, rid));
-  
+
   std::vector<RID> result;
   EXPECT_TRUE(tree.GetValue(key, &result));
   EXPECT_EQ(result.size(), 1);
@@ -40,7 +40,7 @@ TEST(BPlusTreeInsertStrategyTest, SequentialInsertTest) {
 
   GenericKey<8> key;
   RID rid;
-  
+
   for (int i = 0; i < 100; ++i) {
     key.SetFromInteger(i);
     rid.Set(1, i);
@@ -68,7 +68,7 @@ TEST(BPlusTreeInsertStrategyTest, ReverseInsertTest) {
 
   GenericKey<8> key;
   RID rid;
-  
+
   for (int i = 99; i >= 0; --i) {
     key.SetFromInteger(i);
     rid.Set(1, i);
@@ -100,7 +100,7 @@ TEST(BPlusTreeInsertStrategyTest, DuplicateInsertTest) {
   rid.Set(1, 1);
 
   EXPECT_TRUE(tree.Insert(key, rid));
-  EXPECT_FALSE(tree.Insert(key, rid)); // Duplicate
+  EXPECT_FALSE(tree.Insert(key, rid));  // Duplicate
 
   delete bpm;
 }
@@ -111,17 +111,21 @@ TEST(BPlusTreeInsertStrategyTest, LeafSplitTest) {
   auto disk_manager = std::make_unique<DiskManagerUnlimitedMemory>();
   auto *bpm = new BufferPoolManager(50, disk_manager.get());
   page_id_t page_id = bpm->NewPage();
-  // leaf_max_size = 3. 
+  // leaf_max_size = 3.
   // Insert 1, 2. (Size 2). Insert 3 -> Full? Or Insert 3 -> Split?
   // Usually max size means capacity.
   BPlusTree<GenericKey<8>, RID, GenericComparator<8>> tree("foo_pk", page_id, bpm, comparator, 3, 3);
 
   GenericKey<8> key;
   RID rid;
-  
+
   // Insert 1, 2. Page has 2 keys.
-  key.SetFromInteger(1); rid.Set(1, 1); tree.Insert(key, rid);
-  key.SetFromInteger(2); rid.Set(1, 2); tree.Insert(key, rid);
+  key.SetFromInteger(1);
+  rid.Set(1, 1);
+  tree.Insert(key, rid);
+  key.SetFromInteger(2);
+  rid.Set(1, 2);
+  tree.Insert(key, rid);
 
   // Verify Root is Leaf
   page_id_t root_id = tree.GetRootPageId();
@@ -131,9 +135,13 @@ TEST(BPlusTreeInsertStrategyTest, LeafSplitTest) {
   EXPECT_EQ(page->GetSize(), 2);
   page_guard.Drop();
 
-  key.SetFromInteger(3); rid.Set(1, 3); tree.Insert(key, rid);
+  key.SetFromInteger(3);
+  rid.Set(1, 3);
+  tree.Insert(key, rid);
 
-  key.SetFromInteger(4); rid.Set(1, 4); tree.Insert(key, rid);
+  key.SetFromInteger(4);
+  rid.Set(1, 4);
+  tree.Insert(key, rid);
 
   // Now it definitely should have split.
   root_id = tree.GetRootPageId();
@@ -141,11 +149,11 @@ TEST(BPlusTreeInsertStrategyTest, LeafSplitTest) {
   page = page_guard.As<BPlusTreePage>();
 
   EXPECT_FALSE(page->IsLeafPage());
-  
+
   // Check children
   auto internal = page_guard.As<BPlusTreeInternalPage<GenericKey<8>, page_id_t, GenericComparator<8>>>();
-  EXPECT_EQ(internal->GetSize(), 2); // 2 children (2 pointers)
-  
+  EXPECT_EQ(internal->GetSize(), 2);  // 2 children (2 pointers)
+
   delete bpm;
 }
 
@@ -162,9 +170,10 @@ TEST(BPlusTreeInsertStrategyTest, InternalSplitTest) {
   RID rid;
 
   // Root must split.
-  
+
   for (int i = 1; i <= 6; ++i) {
-    key.SetFromInteger(i); rid.Set(1, i);
+    key.SetFromInteger(i);
+    rid.Set(1, i);
     tree.Insert(key, rid);
   }
 
@@ -172,11 +181,11 @@ TEST(BPlusTreeInsertStrategyTest, InternalSplitTest) {
   page_id_t root_id = tree.GetRootPageId();
   auto page_guard = bpm->ReadPage(root_id);
   auto page = page_guard.As<BPlusTreePage>();
-  
+
   EXPECT_FALSE(page->IsLeafPage());
-  EXPECT_EQ(page->GetSize(), 2); // New root should have 2 children
+  EXPECT_EQ(page->GetSize(), 2);  // New root should have 2 children
 
   delete bpm;
 }
 
-} // namespace bustub
+}  // namespace bustub

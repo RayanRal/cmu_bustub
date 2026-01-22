@@ -1,8 +1,8 @@
-#include "storage/index/b_plus_tree.h"
+#include <test_util.h>
 #include "buffer/buffer_pool_manager.h"
-#include "storage/disk/disk_manager_memory.h"
 #include "gtest/gtest.h"
-#include "test_util.h"
+#include "storage/disk/disk_manager_memory.h"
+#include "storage/index/b_plus_tree.h"
 
 namespace bustub {
 
@@ -40,4 +40,4 @@ TEST(BPlusTreeEdgeTest, EmptyTreeOperationsTest) {
   delete bpm;
 }
 
-} // namespace bustub
+}  // namespace bustub

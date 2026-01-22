@@ -279,7 +279,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveHalfTo(BPlusTreeLeafPage *recipient) {
   recipient->SetPageType(IndexPageType::LEAF_PAGE);
   recipient->SetSize(move_count);
   recipient->SetNextPageId(GetNextPageId());
-  SetNextPageId(INVALID_PAGE_ID); 
+  SetNextPageId(INVALID_PAGE_ID);
 
   for (int i = 0; i < move_count; ++i) {
     recipient->SetKeyAt(i, key_array_[start_idx + i]);
@@ -315,7 +315,7 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveAllTo(BPlusTreeLeafPage *recipient) {
     recipient->SetValueAt(start_offset + i, rid_array_[i]);
   }
   recipient->ChangeSizeBy(move_count);
-  recipient->SetNextPageId(GetNextPageId()); 
+  recipient->SetNextPageId(GetNextPageId());
 
   // Merge tombstones
   for (int i = 0; i < num_tombstones_; ++i) {
@@ -339,25 +339,25 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveFirstToEndOf(BPlusTreeLeafPage *recipient) 
 
   // Remove 0 from this (shift)
   for (int i = 0; i < GetSize() - 1; ++i) {
-    SetKeyAt(i, KeyAt(i+1));
-    SetValueAt(i, ValueAt(i+1));
+    SetKeyAt(i, KeyAt(i + 1));
+    SetValueAt(i, ValueAt(i + 1));
   }
   ChangeSizeBy(-1);
-  
+
   // Adjust this tombstones
   if (is_tomb) {
-      RemoveTombstone(0);
+    RemoveTombstone(0);
   }
   ShiftTombstones(0, -1);
-  
+
   // Recipient appends
   int dest_idx = recipient->GetSize();
   recipient->SetKeyAt(dest_idx, key);
   recipient->SetValueAt(dest_idx, val);
   recipient->ChangeSizeBy(1);
-  
+
   if (is_tomb) {
-     recipient->AddTombstone(dest_idx);
+    recipient->AddTombstone(dest_idx);
   }
 }
 
@@ -367,28 +367,28 @@ void B_PLUS_TREE_LEAF_PAGE_TYPE::MoveLastToFrontOf(BPlusTreeLeafPage *recipient)
   KeyType key = KeyAt(src_idx);
   ValueType val = ValueAt(src_idx);
   bool is_tomb = IsTombstone(src_idx);
-  
+
   // Remove from this
   ChangeSizeBy(-1);
   if (is_tomb) {
-      RemoveTombstone(src_idx);
+    RemoveTombstone(src_idx);
   }
-  
+
   // Recipient prepends (Insert at 0)
   for (int i = recipient->GetSize(); i > 0; --i) {
-      recipient->SetKeyAt(i, recipient->KeyAt(i-1));
-      recipient->SetValueAt(i, recipient->ValueAt(i-1));
+    recipient->SetKeyAt(i, recipient->KeyAt(i - 1));
+    recipient->SetValueAt(i, recipient->ValueAt(i - 1));
   }
   recipient->SetKeyAt(0, key);
   recipient->SetValueAt(0, val);
   recipient->ChangeSizeBy(1);
-  
+
   // Recipient tombstones adjust (increment all)
   recipient->ShiftTombstones(0, 1);
-  
+
   if (is_tomb) {
-     int dest_idx = 0;
-     recipient->AddTombstone(dest_idx);
+    int dest_idx = 0;
+    recipient->AddTombstone(dest_idx);
   }
 }
 

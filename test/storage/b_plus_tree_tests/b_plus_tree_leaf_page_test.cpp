@@ -1,8 +1,8 @@
 #include "storage/page/b_plus_tree_leaf_page.h"
+#include <test_util.h>
 #include "common/rid.h"
 #include "gtest/gtest.h"
 #include "storage/index/generic_key.h"
-#include "test_util.h"
 
 namespace bustub {
 
@@ -92,14 +92,14 @@ TEST(BPlusTreeLeafPageTest, TombstoneTest) {
   // Keys: 0, 10, 20, 30, 40
 
   // Set Tombstone
-  leaf_page->SetTombstoneAt(0, 2); // Tombstone points to index 2 (key 20)
+  leaf_page->SetTombstoneAt(0, 2);  // Tombstone points to index 2 (key 20)
   leaf_page->SetTombstoneCount(1);
-  
+
   auto tombstones = leaf_page->GetTombstones();
   ASSERT_EQ(tombstones.size(), 1);
   EXPECT_EQ(tombstones[0].GetAsInteger(), 20);
 
-  leaf_page->SetTombstoneAt(1, 4); // Tombstone points to index 4 (key 40)
+  leaf_page->SetTombstoneAt(1, 4);  // Tombstone points to index 4 (key 40)
   leaf_page->SetTombstoneCount(2);
 
   tombstones = leaf_page->GetTombstones();
@@ -113,7 +113,7 @@ TEST(BPlusTreeLeafPageTest, MoveHalfToTest) {
   char buf2[BUSTUB_PAGE_SIZE];
   auto *page1 = reinterpret_cast<BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>> *>(buf1);
   auto *page2 = reinterpret_cast<BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>> *>(buf2);
-  
+
   page1->Init(10);
   page2->Init(10);
 
@@ -133,7 +133,7 @@ TEST(BPlusTreeLeafPageTest, MoveHalfToTest) {
   // Move half to page2
   page1->MoveHalfTo(page2);
 
-  // Expect splitting. 
+  // Expect splitting.
   // If size is 6, split usually leaves 3 and moves 3.
   EXPECT_EQ(page1->GetSize(), 3);
   EXPECT_EQ(page2->GetSize(), 3);
@@ -147,13 +147,13 @@ TEST(BPlusTreeLeafPageTest, MoveHalfToTest) {
   EXPECT_EQ(page2->KeyAt(2).GetAsInteger(), 60);
 
   // Verify next page id
-  // MoveHalfTo usually updates next page id links? 
+  // MoveHalfTo usually updates next page id links?
   // It depends on implementation, but standard leaf split logic often sets next pointers if passing sibling.
   // The method signature is `void MoveHalfTo(BPlusTreeLeafPage *recipient)`.
   // Usually the logic is: this -> recipient.
   // Let's check if it does that or if the caller is responsible.
   // Based on common Bustub implementations, MoveHalfTo transfers keys.
-  // The caller (Split) handles page ID linking. 
+  // The caller (Split) handles page ID linking.
   // However, `MoveHalfTo` might handle internal array moves.
 }
 
@@ -162,23 +162,31 @@ TEST(BPlusTreeLeafPageTest, MoveAllToTest) {
   char buf2[BUSTUB_PAGE_SIZE];
   auto *page1 = reinterpret_cast<BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>> *>(buf1);
   auto *page2 = reinterpret_cast<BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>> *>(buf2);
-  
+
   page1->Init(10);
   page2->Init(10);
-  
+
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
-  
+
   GenericKey<8> key;
   RID rid;
 
   // Page 1: 10, 20
-  key.SetFromInteger(10); rid.Set(1, 10); page1->Insert(key, rid, comparator);
-  key.SetFromInteger(20); rid.Set(1, 20); page1->Insert(key, rid, comparator);
+  key.SetFromInteger(10);
+  rid.Set(1, 10);
+  page1->Insert(key, rid, comparator);
+  key.SetFromInteger(20);
+  rid.Set(1, 20);
+  page1->Insert(key, rid, comparator);
 
   // Page 2: 30, 40
-  key.SetFromInteger(30); rid.Set(1, 30); page2->Insert(key, rid, comparator);
-  key.SetFromInteger(40); rid.Set(1, 40); page2->Insert(key, rid, comparator);
+  key.SetFromInteger(30);
+  rid.Set(1, 30);
+  page2->Insert(key, rid, comparator);
+  key.SetFromInteger(40);
+  rid.Set(1, 40);
+  page2->Insert(key, rid, comparator);
 
   // Move all from page2 to page1 (Merging)
   // Logic: recipient is page1.
@@ -198,23 +206,31 @@ TEST(BPlusTreeLeafPageTest, MoveFirstToEndOfTest) {
   char buf2[BUSTUB_PAGE_SIZE];
   auto *page1 = reinterpret_cast<BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>> *>(buf1);
   auto *page2 = reinterpret_cast<BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>> *>(buf2);
-  
+
   page1->Init(10);
   page2->Init(10);
-  
+
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
-  
+
   GenericKey<8> key;
   RID rid;
 
   // Page 1 (Source): 30, 40
-  key.SetFromInteger(30); rid.Set(1, 30); page1->Insert(key, rid, comparator);
-  key.SetFromInteger(40); rid.Set(1, 40); page1->Insert(key, rid, comparator);
+  key.SetFromInteger(30);
+  rid.Set(1, 30);
+  page1->Insert(key, rid, comparator);
+  key.SetFromInteger(40);
+  rid.Set(1, 40);
+  page1->Insert(key, rid, comparator);
 
   // Page 2 (Recipient): 10, 20
-  key.SetFromInteger(10); rid.Set(1, 10); page2->Insert(key, rid, comparator);
-  key.SetFromInteger(20); rid.Set(1, 20); page2->Insert(key, rid, comparator);
+  key.SetFromInteger(10);
+  rid.Set(1, 10);
+  page2->Insert(key, rid, comparator);
+  key.SetFromInteger(20);
+  rid.Set(1, 20);
+  page2->Insert(key, rid, comparator);
 
   // Move first of page1 to end of page2
   // Typically used when page1 is right sibling of page2.
@@ -223,11 +239,11 @@ TEST(BPlusTreeLeafPageTest, MoveFirstToEndOfTest) {
   EXPECT_EQ(page1->GetSize(), 1);
   EXPECT_EQ(page2->GetSize(), 3);
 
-  EXPECT_EQ(page1->KeyAt(0).GetAsInteger(), 40); // 30 is gone
+  EXPECT_EQ(page1->KeyAt(0).GetAsInteger(), 40);  // 30 is gone
 
   EXPECT_EQ(page2->KeyAt(0).GetAsInteger(), 10);
   EXPECT_EQ(page2->KeyAt(1).GetAsInteger(), 20);
-  EXPECT_EQ(page2->KeyAt(2).GetAsInteger(), 30); // 30 appended
+  EXPECT_EQ(page2->KeyAt(2).GetAsInteger(), 30);  // 30 appended
 }
 
 TEST(BPlusTreeLeafPageTest, MoveLastToFrontOfTest) {
@@ -235,23 +251,31 @@ TEST(BPlusTreeLeafPageTest, MoveLastToFrontOfTest) {
   char buf2[BUSTUB_PAGE_SIZE];
   auto *page1 = reinterpret_cast<BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>> *>(buf1);
   auto *page2 = reinterpret_cast<BPlusTreeLeafPage<GenericKey<8>, RID, GenericComparator<8>> *>(buf2);
-  
+
   page1->Init(10);
   page2->Init(10);
-  
+
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
-  
+
   GenericKey<8> key;
   RID rid;
 
   // Page 1 (Source): 10, 20
-  key.SetFromInteger(10); rid.Set(1, 10); page1->Insert(key, rid, comparator);
-  key.SetFromInteger(20); rid.Set(1, 20); page1->Insert(key, rid, comparator);
+  key.SetFromInteger(10);
+  rid.Set(1, 10);
+  page1->Insert(key, rid, comparator);
+  key.SetFromInteger(20);
+  rid.Set(1, 20);
+  page1->Insert(key, rid, comparator);
 
   // Page 2 (Recipient): 30, 40
-  key.SetFromInteger(30); rid.Set(1, 30); page2->Insert(key, rid, comparator);
-  key.SetFromInteger(40); rid.Set(1, 40); page2->Insert(key, rid, comparator);
+  key.SetFromInteger(30);
+  rid.Set(1, 30);
+  page2->Insert(key, rid, comparator);
+  key.SetFromInteger(40);
+  rid.Set(1, 40);
+  page2->Insert(key, rid, comparator);
 
   // Move last of page1 to front of page2
   // Typically used when page1 is left sibling of page2.
@@ -260,11 +284,11 @@ TEST(BPlusTreeLeafPageTest, MoveLastToFrontOfTest) {
   EXPECT_EQ(page1->GetSize(), 1);
   EXPECT_EQ(page2->GetSize(), 3);
 
-  EXPECT_EQ(page1->KeyAt(0).GetAsInteger(), 10); // 20 is gone
+  EXPECT_EQ(page1->KeyAt(0).GetAsInteger(), 10);  // 20 is gone
 
-  EXPECT_EQ(page2->KeyAt(0).GetAsInteger(), 20); // 20 prepended
+  EXPECT_EQ(page2->KeyAt(0).GetAsInteger(), 20);  // 20 prepended
   EXPECT_EQ(page2->KeyAt(1).GetAsInteger(), 30);
   EXPECT_EQ(page2->KeyAt(2).GetAsInteger(), 40);
 }
 
-} // namespace bustub
+}  // namespace bustub

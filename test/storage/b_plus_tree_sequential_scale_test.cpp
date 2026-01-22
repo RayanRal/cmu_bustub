@@ -58,7 +58,7 @@ TEST(BPlusTreeTests, BasicScaleTest) {  // NOLINT
     tree.Insert(index_key, rid);
     count++;
     if (count % 1000 == 0) {
-        std::cout << "Inserted " << count << " keys" << std::endl;
+      std::cout << "Inserted " << count << " keys" << std::endl;
     }
   }
   std::cout << "Insertion complete. Starting verification." << std::endl;
@@ -74,7 +74,7 @@ TEST(BPlusTreeTests, BasicScaleTest) {  // NOLINT
     ASSERT_EQ(rids[0].GetSlotNum(), value);
     count++;
     if (count % 1000 == 0) {
-        std::cout << "Verified " << count << " keys" << std::endl;
+      std::cout << "Verified " << count << " keys" << std::endl;
     }
   }
   delete bpm;
