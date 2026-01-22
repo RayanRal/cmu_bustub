@@ -86,8 +86,7 @@ auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key, Operation op, Context &ctx
       header_guard.Drop();  // Safe to drop header now
 
       auto leaf_page = root_write_guard.AsMut<BPlusTreePage>();
-      bool safe = (op == Operation::OPTIMISTIC_INSERT) ? IsSafeInsert(leaf_page) : IsSafeRemove(leaf_page);
-      if (safe) {
+      if (op == Operation::OPTIMISTIC_INSERT ? IsSafeInsert(leaf_page) : IsSafeRemove(leaf_page)) {
         ctx.write_set_.push_back(std::move(root_write_guard));
         return reinterpret_cast<const LeafPage *>(leaf_page);
       }
@@ -130,8 +129,7 @@ auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key, Operation op, Context &ctx
 
     // Check if Root is Safe
     auto root_page = ctx.write_set_.back().AsMut<BPlusTreePage>();
-    bool safe = (op == Operation::INSERT) ? IsSafeInsert(root_page) : IsSafeRemove(root_page);
-    if (safe) {
+    if (op == Operation::INSERT ? IsSafeInsert(root_page) : IsSafeRemove(root_page)) {
       ctx.header_page_ = std::nullopt;  // Release Header
     }
   }
@@ -146,14 +144,6 @@ auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key, Operation op, Context &ctx
     }
 
     if (page->IsLeafPage()) {
-      // Should effectively be unreachable for OPTIMISTIC types because we handle Leaf check BEFORE pushing to set?
-      // No, for SEARCH we push then check.
-      // For OPTIMISTIC, we check CHILD.
-      // So if we are HERE, 'page' is already in the set.
-      // For OPTIMISTIC, we only push INTERNAL pages to read_set_.
-      // If we find a leaf child, we handle it and return.
-      // So we should never reach here with a Leaf page for OPTIMISTIC operations?
-      // Wait, let's check logic below.
       return reinterpret_cast<const LeafPage *>(page);
     }
 
@@ -182,11 +172,10 @@ auto BPLUSTREE_TYPE::FindLeafPage(const KeyType &key, Operation op, Context &ctx
           return reinterpret_cast<const LeafPage *>(leaf_mut);
         }
         return nullptr;
-      } else {
-        // Internal
-        ctx.read_set_.push_back(std::move(child_guard));
-        ctx.read_set_.pop_front();
       }
+      // Internal
+      ctx.read_set_.push_back(std::move(child_guard));
+      ctx.read_set_.pop_front();
     } else {
       WritePageGuard child_guard = bpm_->WritePage(child_id);
       ctx.write_set_.push_back(std::move(child_guard));
@@ -267,7 +256,9 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   if (leaf == nullptr) {
     // Empty tree
     page_id_t new_page_id = bpm_->NewPage();
-    if (new_page_id == INVALID_PAGE_ID) return false;
+    if (new_page_id == INVALID_PAGE_ID) {
+      return false;
+    }
 
     WritePageGuard root_guard = bpm_->WritePage(new_page_id);
     auto leaf_mut = root_guard.AsMut<LeafPage>();
@@ -381,8 +372,7 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
   }
 
   auto leaf_mut = const_cast<LeafPage *>(leaf);
-  bool res = leaf_mut->Remove(key, comparator_);
-  if (!res) {
+  if (bool res = leaf_mut->Remove(key, comparator_); !res) {
     return;
   }
 

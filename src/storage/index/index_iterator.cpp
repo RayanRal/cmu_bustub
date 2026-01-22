@@ -40,11 +40,10 @@ INDEXITERATOR_TYPE::IndexIterator(TracedBufferPoolManager *bpm, ReadPageGuard gu
         page_id_ = next_page_id;
         index_ = 0;
         continue;  // Check again for new page
-      } else {
-        page_id_ = INVALID_PAGE_ID;
-        index_ = 0;
-        break;
       }
+      page_id_ = INVALID_PAGE_ID;
+      index_ = 0;
+      break;
     }
 
     if (leaf->IsTombstone(index_)) {
@@ -85,11 +84,10 @@ auto INDEXITERATOR_TYPE::operator++() -> INDEXITERATOR_TYPE & {
         page_id_ = next_page_id;
         index_ = 0;
         continue;
-      } else {
-        page_id_ = INVALID_PAGE_ID;
-        index_ = 0;
-        break;
       }
+      page_id_ = INVALID_PAGE_ID;
+      index_ = 0;
+      break;
     }
 
     if (leaf->IsTombstone(index_)) {

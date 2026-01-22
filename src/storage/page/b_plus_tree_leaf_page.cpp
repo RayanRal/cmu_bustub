@@ -105,10 +105,11 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::IsTombstone(int index) const -> bool {
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
 void B_PLUS_TREE_LEAF_PAGE_TYPE::AddTombstone(int &key_idx) {
-  if (LEAF_PAGE_TOMB_CNT == 0) return;
+  if (LEAF_PAGE_TOMB_CNT == 0) {
+    return;
+  }
   if (num_tombstones_ == LEAF_PAGE_TOMB_CNT) {
-    int victim_idx = HandleTombstoneOverflow();
-    if (key_idx > victim_idx) {
+    if (int victim_idx = HandleTombstoneOverflow(); key_idx > victim_idx) {
       key_idx--;
     }
   }
@@ -151,7 +152,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::HandleTombstoneOverflow() -> int {
   for (int i = 0; i < num_tombstones_ - 1; ++i) {
     tombstones_[i] = tombstones_[i + 1];
     if (tombstones_[i] > victim_idx) {
-      tombstones_[i]--;
+      --tombstones_[i];
     }
   }
   num_tombstones_--;
@@ -168,7 +169,7 @@ auto B_PLUS_TREE_LEAF_PAGE_TYPE::Lookup(const KeyType &key, const KeyComparator 
   int r = GetSize() - 1;
   while (l <= r) {
     int mid = l + (r - l) / 2;
-    int cmp = comparator(key_array_[mid], key);
+    const int cmp = comparator(key_array_[mid], key);
     if (cmp == 0) {
       return mid;
     }

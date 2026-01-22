@@ -2,7 +2,7 @@
 #include "gtest/gtest.h"
 #include "storage/disk/disk_manager_memory.h"
 #include "storage/index/b_plus_tree.h"
-#include "test/include/test_util.h"
+#include "test_util.h"  // NOLINT
 
 namespace bustub {
 

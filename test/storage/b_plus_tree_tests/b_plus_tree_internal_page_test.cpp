@@ -1,5 +1,5 @@
 #include "storage/page/b_plus_tree_internal_page.h"
-#include <test_util.h>
+#include "test_util.h"  // NOLINT
 #include "gtest/gtest.h"
 #include "storage/index/generic_key.h"
 
