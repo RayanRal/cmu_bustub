@@ -129,7 +129,7 @@ class BPlusTree {
   auto ToPrintableBPlusTree(page_id_t root_id) -> PrintableBPlusTree;
 
   // Helpers
-  enum class Operation { SEARCH, INSERT, DELETE };
+  enum class Operation { SEARCH, INSERT, DELETE, OPTIMISTIC_INSERT, OPTIMISTIC_DELETE };
 
   auto FindLeafPage(const KeyType &key, Operation op, Context &ctx, bool leftMost = false) -> const LeafPage *;
   void InsertIntoParent(const KeyType &key, page_id_t value, page_id_t old_value, Context &ctx);
