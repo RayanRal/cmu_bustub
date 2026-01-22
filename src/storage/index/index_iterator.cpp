@@ -61,7 +61,7 @@ FULL_INDEX_TEMPLATE_ARGUMENTS
 auto INDEXITERATOR_TYPE::IsEnd() -> bool { return page_id_ == INVALID_PAGE_ID; }
 
 FULL_INDEX_TEMPLATE_ARGUMENTS
-auto INDEXITERATOR_TYPE::operator*() -> std::pair<const KeyType &, const ValueType &> {
+auto INDEXITERATOR_TYPE::operator*() -> std::pair<KeyType, ValueType> {
   auto leaf = guard_.As<LeafPage>();
   return {leaf->KeyAt(index_), leaf->ValueAt(index_)};
 }

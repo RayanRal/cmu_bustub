@@ -38,7 +38,7 @@ class IndexIterator {
 
   auto IsEnd() -> bool;
 
-  auto operator*() -> std::pair<const KeyType &, const ValueType &>;
+  auto operator*() -> std::pair<KeyType, ValueType>;
 
   auto operator++() -> IndexIterator &;
 
