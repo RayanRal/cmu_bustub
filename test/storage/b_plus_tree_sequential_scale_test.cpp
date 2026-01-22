@@ -27,7 +27,7 @@ using bustub::DiskManagerUnlimitedMemory;
 /**
  * (Fall 2024) You should pass this test after finishing insertion and point search.
  */
-TEST(BPlusTreeTests, DISABLED_BasicScaleTest) {  // NOLINT
+TEST(BPlusTreeTests, BasicScaleTest) {  // NOLINT
   // create KeyComparator and index schema
   auto key_schema = ParseCreateStatement("a bigint");
   GenericComparator<8> comparator(key_schema.get());
@@ -50,12 +50,19 @@ TEST(BPlusTreeTests, DISABLED_BasicScaleTest) {  // NOLINT
   // randomized the insertion order
   auto rng = std::default_random_engine{};
   std::shuffle(keys.begin(), keys.end(), rng);
+  int count = 0;
   for (auto key : keys) {
     int64_t value = key & 0xFFFFFFFF;
     rid.Set(static_cast<int32_t>(key >> 32), value);
     index_key.SetFromInteger(key);
     tree.Insert(index_key, rid);
+    count++;
+    if (count % 1000 == 0) {
+      std::cout << "Inserted " << count << " keys" << std::endl;
+    }
   }
+  std::cout << "Insertion complete. Starting verification." << std::endl;
+  count = 0;
   std::vector<RID> rids;
   for (auto key : keys) {
     rids.clear();
@@ -65,6 +72,10 @@ TEST(BPlusTreeTests, DISABLED_BasicScaleTest) {  // NOLINT
 
     int64_t value = key & 0xFFFFFFFF;
     ASSERT_EQ(rids[0].GetSlotNum(), value);
+    count++;
+    if (count % 1000 == 0) {
+      std::cout << "Verified " << count << " keys" << std::endl;
+    }
   }
   delete bpm;
 }

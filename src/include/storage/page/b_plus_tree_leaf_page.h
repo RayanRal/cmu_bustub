@@ -73,6 +73,29 @@ class BPlusTreeLeafPage : public BPlusTreePage {
   auto GetNextPageId() const -> page_id_t;
   void SetNextPageId(page_id_t next_page_id);
   auto KeyAt(int index) const -> KeyType;
+  void SetKeyAt(int index, const KeyType &key);
+  auto ValueAt(int index) const -> ValueType;
+  void SetValueAt(int index, const ValueType &value);
+
+  // Tombstone helpers
+  void SetTombstoneAt(int index, int key_idx);
+  auto GetTombstoneAt(int index) const -> int;
+  auto GetTombstoneCount() const -> int;
+  void SetTombstoneCount(int count);
+  auto IsTombstone(int index) const -> bool;
+  void AddTombstone(int &key_idx);
+  void RemoveTombstone(int key_idx);
+  void ShiftTombstones(int start_idx, int delta);
+  auto HandleTombstoneOverflow() -> int;
+
+  // Operation helpers
+  auto Lookup(const KeyType &key, const KeyComparator &comparator) const -> int;
+  auto Insert(const KeyType &key, const ValueType &value, const KeyComparator &comparator) -> bool;
+  auto Remove(const KeyType &key, const KeyComparator &comparator) -> bool;
+  void MoveHalfTo(BPlusTreeLeafPage *recipient);
+  void MoveAllTo(BPlusTreeLeafPage *recipient);
+  void MoveFirstToEndOf(BPlusTreeLeafPage *recipient);
+  void MoveLastToFrontOf(BPlusTreeLeafPage *recipient);
 
   /**
    * @brief for test only return a string representing all keys in
@@ -81,39 +104,34 @@ class BPlusTreeLeafPage : public BPlusTreePage {
    * @return std::string
    */
   auto ToString() const -> std::string {
-    std::string kstr = "(";
-    bool first = true;
-
+    std::stringstream ss;
+    ss << "(";
     auto tombs = GetTombstones();
     for (size_t i = 0; i < tombs.size(); i++) {
-      kstr.append(std::to_string(tombs[i].ToString()));
+      ss << tombs[i];
       if ((i + 1) < tombs.size()) {
-        kstr.append(",");
+        ss << ",";
       }
     }
 
-    kstr.append("|");
+    ss << "|";
 
     for (int i = 0; i < GetSize(); i++) {
-      KeyType key = KeyAt(i);
-      if (first) {
-        first = false;
-      } else {
-        kstr.append(",");
+      if (i > 0) {
+        ss << ",";
       }
-
-      kstr.append(std::to_string(key.ToString()));
+      ss << KeyAt(i);
     }
-    kstr.append(")");
+    ss << ")";
 
-    return kstr;
+    return ss.str();
   }
 
  private:
   page_id_t next_page_id_;
-  size_t num_tombstones_;
+  int num_tombstones_;
   // Fixed-size tombstone buffer (indexes into key_array_ / rid_array_).
-  size_t tombstones_[LEAF_PAGE_TOMB_CNT];
+  int tombstones_[LEAF_PAGE_TOMB_CNT];
   // Array members for page data.
   KeyType key_array_[LEAF_PAGE_SLOT_CNT];
   ValueType rid_array_[LEAF_PAGE_SLOT_CNT];
