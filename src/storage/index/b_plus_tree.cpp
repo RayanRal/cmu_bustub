@@ -273,7 +273,9 @@ auto BPLUSTREE_TYPE::Insert(const KeyType &key, const ValueType &value) -> bool 
   auto leaf_mut = const_cast<LeafPage *>(leaf);
   if (leaf_mut->GetSize() == leaf_mut->GetMaxSize()) {
     page_id_t new_leaf_id = bpm_->NewPage();
-    if (new_leaf_id == INVALID_PAGE_ID) return false;
+    if (new_leaf_id == INVALID_PAGE_ID) {
+      return false;
+    }
     WritePageGuard new_leaf_guard = bpm_->WritePage(new_leaf_id);
     auto new_leaf = new_leaf_guard.AsMut<LeafPage>();
     new_leaf->Init(leaf_max_size_);
@@ -303,7 +305,9 @@ void BPLUSTREE_TYPE::InsertIntoParent(const KeyType &key, page_id_t value, page_
   if (ctx.write_set_.empty()) {
     // New root
     page_id_t new_root_id = bpm_->NewPage();
-    if (new_root_id == INVALID_PAGE_ID) return;
+    if (new_root_id == INVALID_PAGE_ID) {
+      return;
+    }
     WritePageGuard new_root_guard = bpm_->WritePage(new_root_id);
     auto new_root = new_root_guard.AsMut<InternalPage>();
     new_root->Init(internal_max_size_);
@@ -403,7 +407,9 @@ void BPLUSTREE_TYPE::Remove(const KeyType &key) {
       ctx.write_set_.pop_back();
       auto node = node_guard.AsMut<BPlusTreePage>();
 
-      if (IsSafeRemove(node)) break;
+      if (IsSafeRemove(node)) {
+        break;
+      }
 
       auto &parent_guard = ctx.write_set_.back();
       auto parent = parent_guard.AsMut<InternalPage>();

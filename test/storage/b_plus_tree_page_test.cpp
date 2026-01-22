@@ -66,7 +66,9 @@ TEST(BPlusTreePageTest, LeafPageTombstoneTest) {
   EXPECT_EQ(leaf_page->GetTombstoneCount(), 0);
 
   // Setup keys
-  GenericKey<8> key0, key1, key2;
+  GenericKey<8> key0;
+  GenericKey<8> key1;
+  GenericKey<8> key2;
   key0.SetFromInteger(10);
   key1.SetFromInteger(20);
   key2.SetFromInteger(30);

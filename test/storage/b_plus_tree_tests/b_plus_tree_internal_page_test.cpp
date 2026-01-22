@@ -54,7 +54,9 @@ TEST(BPlusTreeInternalPageTest, LookupTest) {
   // P0 | K1 | P1 | K2 | P2 | K3 | P3
   // Values: P0=100, K1=10, P1=101, K2=20, P2=102, K3=30, P3=103
 
-  GenericKey<8> k1, k2, k3;
+  GenericKey<8> k1;
+  GenericKey<8> k2;
+  GenericKey<8> k3;
   k1.SetFromInteger(10);
   k2.SetFromInteger(20);
   k3.SetFromInteger(30);
