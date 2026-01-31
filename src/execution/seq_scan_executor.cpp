@@ -45,8 +45,16 @@ auto SeqScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<
   while (!table_iter_->IsEnd() && tuple_batch->size() < batch_size) {
     auto [meta, tuple] = table_iter_->GetTuple();
     if (!meta.is_deleted_) {
-      tuple_batch->push_back(tuple);
-      rid_batch->push_back(table_iter_->GetRID());
+      if (plan_->filter_predicate_ != nullptr) {
+        auto value = plan_->filter_predicate_->Evaluate(&tuple, plan_->OutputSchema());
+        if (!value.IsNull() && value.GetAs<bool>()) {
+          tuple_batch->push_back(tuple);
+          rid_batch->push_back(table_iter_->GetRID());
+        }
+      } else {
+        tuple_batch->push_back(tuple);
+        rid_batch->push_back(table_iter_->GetRID());
+      }
     }
     ++(*table_iter_);
   }
