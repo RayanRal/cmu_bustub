@@ -42,6 +42,15 @@ class InsertExecutor : public AbstractExecutor {
  private:
   /** The insert plan node to be executed*/
   const InsertPlanNode *plan_;
+
+  /** The child executor from which inserted tuples are pulled */
+  std::unique_ptr<AbstractExecutor> child_executor_;
+
+  /** The table info for the table to be inserted into */
+  const TableInfo *table_info_;
+
+  /** Boolean to check if the insert is finished */
+  bool is_finished_;
 };
 
 }  // namespace bustub
