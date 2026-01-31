@@ -20,12 +20,15 @@ namespace bustub {
  * @param exec_ctx The executor context
  * @param plan The sequential scan plan to be executed
  */
-SeqScanExecutor::SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNode *plan) : AbstractExecutor(exec_ctx) {
-  UNIMPLEMENTED("TODO(P3): Add implementation.");
-}
+SeqScanExecutor::SeqScanExecutor(ExecutorContext *exec_ctx, const SeqScanPlanNode *plan)
+    : AbstractExecutor(exec_ctx), plan_(plan) {}
 
 /** Initialize the sequential scan */
-void SeqScanExecutor::Init() { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+void SeqScanExecutor::Init() {
+  auto *catalog = exec_ctx_->GetCatalog();
+  auto table_info = catalog->GetTable(plan_->GetTableOid());
+  table_iter_ = std::make_unique<TableIterator>(table_info->table_->MakeIterator());
+}
 
 /**
  * Yield the next tuple batch from the seq scan.
@@ -36,7 +39,19 @@ void SeqScanExecutor::Init() { UNIMPLEMENTED("TODO(P3): Add implementation."); }
  */
 auto SeqScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch,
                            size_t batch_size) -> bool {
-  UNIMPLEMENTED("TODO(P3): Add implementation.");
+  tuple_batch->clear();
+  rid_batch->clear();
+
+  while (!table_iter_->IsEnd() && tuple_batch->size() < batch_size) {
+    auto [meta, tuple] = table_iter_->GetTuple();
+    if (!meta.is_deleted_) {
+      tuple_batch->push_back(tuple);
+      rid_batch->push_back(table_iter_->GetRID());
+    }
+    ++(*table_iter_);
+  }
+
+  return !tuple_batch->empty();
 }
 
 }  // namespace bustub
