@@ -23,6 +23,7 @@ TESTS=(
     "test/sql/p3.03-update.slt"
     "test/sql/p3.04-delete.slt"
     "test/sql/p3.05-index-scan-btree.slt"
+    "test/sql/p3.06-empty-table.slt"
 )
 
 # Move back to root to use relative paths correctly if needed, 
