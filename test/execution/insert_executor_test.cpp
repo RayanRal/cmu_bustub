@@ -54,16 +54,18 @@ TEST(InsertExecutorTest, SimpleInsertTest) {
   for (int i = 0; i < 5; ++i) {
     std::vector<AbstractExpressionRef> row;
     row.emplace_back(std::make_shared<ConstantValueExpression>(ValueFactory::GetIntegerValue(i)));
-    row.emplace_back(std::make_shared<ConstantValueExpression>(ValueFactory::GetVarcharValue("val" + std::to_string(i))));
+    row.emplace_back(
+        std::make_shared<ConstantValueExpression>(ValueFactory::GetVarcharValue("val" + std::to_string(i))));
     values.push_back(row);
   }
-  
+
   auto values_plan = std::make_shared<ValuesPlanNode>(std::make_shared<Schema>(schema), values);
 
   // Create InsertPlanNode
   // Insert returns count (INTEGER)
   Schema insert_output_schema({Column("__bustub_internal.insert_rows", TypeId::INTEGER)});
-  auto insert_plan = std::make_unique<InsertPlanNode>(std::make_shared<Schema>(insert_output_schema), values_plan, table_info->oid_);
+  auto insert_plan =
+      std::make_unique<InsertPlanNode>(std::make_shared<Schema>(insert_output_schema), values_plan, table_info->oid_);
 
   // Create ExecutorContext
   auto exec_ctx = std::make_unique<ExecutorContext>(txn, catalog, bpm, txn_mgr, lock_mgr, false);
@@ -72,7 +74,8 @@ TEST(InsertExecutorTest, SimpleInsertTest) {
   auto values_executor = std::make_unique<ValuesExecutor>(exec_ctx.get(), values_plan.get());
 
   // Create InsertExecutor
-  auto insert_executor = std::make_unique<InsertExecutor>(exec_ctx.get(), insert_plan.get(), std::move(values_executor));
+  auto insert_executor =
+      std::make_unique<InsertExecutor>(exec_ctx.get(), insert_plan.get(), std::move(values_executor));
 
   // Init
   insert_executor->Init();
@@ -80,7 +83,7 @@ TEST(InsertExecutorTest, SimpleInsertTest) {
   // Execute
   std::vector<Tuple> result_tuples;
   std::vector<RID> result_rids;
-  
+
   ASSERT_TRUE(insert_executor->Next(&result_tuples, &result_rids, 1));
   ASSERT_EQ(result_tuples.size(), 1);
   ASSERT_EQ(result_tuples[0].GetValue(&insert_output_schema, 0).GetAs<int32_t>(), 5);
@@ -88,19 +91,20 @@ TEST(InsertExecutorTest, SimpleInsertTest) {
   ASSERT_FALSE(insert_executor->Next(&result_tuples, &result_rids, 1));
 
   // Verify content via SeqScan
-  auto seq_plan = std::make_unique<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
+  auto seq_plan =
+      std::make_unique<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
   auto seq_executor = std::make_unique<SeqScanExecutor>(exec_ctx.get(), seq_plan.get());
-  
+
   seq_executor->Init();
-  
+
   int count = 0;
   std::vector<Tuple> scan_tuples;
   std::vector<RID> scan_rids;
-  while(seq_executor->Next(&scan_tuples, &scan_rids, 10)) {
+  while (seq_executor->Next(&scan_tuples, &scan_rids, 10)) {
     count += scan_tuples.size();
     scan_tuples.clear();
   }
-  
+
   ASSERT_EQ(count, 5);
 
   // Cleanup

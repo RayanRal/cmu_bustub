@@ -59,11 +59,13 @@ TEST(DeleteExecutorTest, SimpleDeleteTest) {
   auto *delete_txn = txn_mgr->Begin();
 
   // Create SeqScanPlanNode as child of Delete (delete all rows)
-  auto scan_plan = std::make_shared<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
+  auto scan_plan =
+      std::make_shared<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
 
   // Create DeletePlanNode
   Schema delete_output_schema({Column("__bustub_internal.delete_rows", TypeId::INTEGER)});
-  auto delete_plan = std::make_unique<DeletePlanNode>(std::make_shared<Schema>(delete_output_schema), scan_plan, table_info->oid_);
+  auto delete_plan =
+      std::make_unique<DeletePlanNode>(std::make_shared<Schema>(delete_output_schema), scan_plan, table_info->oid_);
 
   // Create ExecutorContext
   auto exec_ctx = std::make_unique<ExecutorContext>(delete_txn, catalog, bpm, txn_mgr, lock_mgr, false);
@@ -80,7 +82,7 @@ TEST(DeleteExecutorTest, SimpleDeleteTest) {
   // Execute
   std::vector<Tuple> result_tuples;
   std::vector<RID> result_rids;
-  
+
   ASSERT_TRUE(delete_executor->Next(&result_tuples, &result_rids, 1));
   ASSERT_EQ(result_tuples.size(), 1);
   ASSERT_EQ(result_tuples[0].GetValue(&delete_output_schema, 0).GetAs<int32_t>(), 5);
@@ -88,19 +90,20 @@ TEST(DeleteExecutorTest, SimpleDeleteTest) {
   ASSERT_FALSE(delete_executor->Next(&result_tuples, &result_rids, 1));
 
   // Verify content via SeqScan
-  auto verify_scan_plan = std::make_unique<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
+  auto verify_scan_plan =
+      std::make_unique<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
   auto verify_scan_executor = std::make_unique<SeqScanExecutor>(exec_ctx.get(), verify_scan_plan.get());
-  
+
   verify_scan_executor->Init();
-  
+
   int count = 0;
   std::vector<Tuple> scan_tuples;
   std::vector<RID> scan_rids;
-  while(verify_scan_executor->Next(&scan_tuples, &scan_rids, 10)) {
+  while (verify_scan_executor->Next(&scan_tuples, &scan_rids, 10)) {
     count += scan_tuples.size();
     scan_tuples.clear();
   }
-  
+
   ASSERT_EQ(count, 0);
 
   // Cleanup

@@ -11,17 +11,18 @@
 //===----------------------------------------------------------------------===//
 
 #include <vector>
-#include "optimizer/optimizer.h"
 #include "execution/expressions/column_value_expression.h"
-#include "execution/expressions/constant_value_expression.h"
 #include "execution/expressions/comparison_expression.h"
+#include "execution/expressions/constant_value_expression.h"
 #include "execution/expressions/logic_expression.h"
 #include "execution/plans/index_scan_plan.h"
 #include "execution/plans/seq_scan_plan.h"
+#include "optimizer/optimizer.h"
 
 namespace bustub {
 
-void ExtractEqualityConstants(const AbstractExpressionRef &expr, uint32_t &col_idx, std::vector<Value> &constants, bool &possible) {
+void ExtractEqualityConstants(const AbstractExpressionRef &expr, uint32_t &col_idx, std::vector<Value> &constants,
+                              bool &possible) {
   if (!possible) return;
 
   if (const auto *logic = dynamic_cast<const LogicExpression *>(expr.get()); logic != nullptr) {
@@ -38,7 +39,7 @@ void ExtractEqualityConstants(const AbstractExpressionRef &expr, uint32_t &col_i
     if (comparison->comp_type_ == ComparisonType::Equal) {
       const auto *left = dynamic_cast<const ColumnValueExpression *>(comparison->GetChildAt(0).get());
       const auto *right = dynamic_cast<const ConstantValueExpression *>(comparison->GetChildAt(1).get());
-      
+
       if (left == nullptr || right == nullptr) {
         left = dynamic_cast<const ColumnValueExpression *>(comparison->GetChildAt(1).get());
         right = dynamic_cast<const ConstantValueExpression *>(comparison->GetChildAt(0).get());
