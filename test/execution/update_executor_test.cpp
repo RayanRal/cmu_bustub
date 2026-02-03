@@ -63,7 +63,8 @@ TEST(UpdateExecutorTest, SimpleUpdateTest) {
   auto *update_txn = txn_mgr->Begin();
 
   // Create SeqScanPlanNode as child of Update
-  auto scan_plan = std::make_shared<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
+  auto scan_plan =
+      std::make_shared<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
 
   // Create target expressions: col a stays same, col b becomes "modified"
   std::vector<AbstractExpressionRef> target_exprs;
@@ -72,7 +73,8 @@ TEST(UpdateExecutorTest, SimpleUpdateTest) {
 
   // Create UpdatePlanNode
   Schema update_output_schema({Column("__bustub_internal.update_rows", TypeId::INTEGER)});
-  auto update_plan = std::make_unique<UpdatePlanNode>(std::make_shared<Schema>(update_output_schema), scan_plan, table_info->oid_, target_exprs);
+  auto update_plan = std::make_unique<UpdatePlanNode>(std::make_shared<Schema>(update_output_schema), scan_plan,
+                                                      table_info->oid_, target_exprs);
 
   // Create ExecutorContext
   auto exec_ctx = std::make_unique<ExecutorContext>(update_txn, catalog, bpm, txn_mgr, lock_mgr, false);
@@ -89,7 +91,7 @@ TEST(UpdateExecutorTest, SimpleUpdateTest) {
   // Execute
   std::vector<Tuple> result_tuples;
   std::vector<RID> result_rids;
-  
+
   ASSERT_TRUE(update_executor->Next(&result_tuples, &result_rids, 1));
   ASSERT_EQ(result_tuples.size(), 1);
   ASSERT_EQ(result_tuples[0].GetValue(&update_output_schema, 0).GetAs<int32_t>(), 5);
@@ -97,22 +99,23 @@ TEST(UpdateExecutorTest, SimpleUpdateTest) {
   ASSERT_FALSE(update_executor->Next(&result_tuples, &result_rids, 1));
 
   // Verify content via SeqScan
-  auto verify_scan_plan = std::make_unique<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
+  auto verify_scan_plan =
+      std::make_unique<SeqScanPlanNode>(std::make_shared<Schema>(schema), table_info->oid_, table_info->name_);
   auto verify_scan_executor = std::make_unique<SeqScanExecutor>(exec_ctx.get(), verify_scan_plan.get());
-  
+
   verify_scan_executor->Init();
-  
+
   int count = 0;
   std::vector<Tuple> scan_tuples;
   std::vector<RID> scan_rids;
-  while(verify_scan_executor->Next(&scan_tuples, &scan_rids, 10)) {
-    for(const auto &tuple : scan_tuples) {
+  while (verify_scan_executor->Next(&scan_tuples, &scan_rids, 10)) {
+    for (const auto &tuple : scan_tuples) {
       EXPECT_EQ(tuple.GetValue(&schema, 1).ToString(), "modified");
       count++;
     }
     scan_tuples.clear();
   }
-  
+
   ASSERT_EQ(count, 5);
 
   // Cleanup
