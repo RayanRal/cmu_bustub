@@ -40,7 +40,7 @@ void IndexScanExecutor::Init() {
       tree_->ScanKey(key_tuple, &rids_, exec_ctx_->GetTransaction());
     }
   } else {
-    iter_.reset(new BPlusTreeIndexIteratorForTwoIntegerColumn(tree_->GetBeginIterator()));
+    iter_ = std::make_unique<BPlusTreeIndexIteratorForTwoIntegerColumn>(tree_->GetBeginIterator());
   }
 }
 

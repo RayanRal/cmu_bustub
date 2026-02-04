@@ -23,7 +23,9 @@ namespace bustub {
 
 void ExtractEqualityConstants(const AbstractExpressionRef &expr, uint32_t &col_idx, std::vector<Value> &constants,
                               bool &possible) {
-  if (!possible) return;
+  if (!possible) {
+    return;
+  }
 
   if (const auto *logic = dynamic_cast<const LogicExpression *>(expr.get()); logic != nullptr) {
     if (logic->logic_type_ == LogicType::Or) {
@@ -81,6 +83,7 @@ auto Optimizer::OptimizeSeqScanAsIndexScan(const bustub::AbstractPlanNodeRef &pl
           const auto &columns = index->index_->GetKeyAttrs();
           if (columns.size() == 1 && columns[0] == col_idx) {
             std::vector<AbstractExpressionRef> pred_keys;
+            pred_keys.reserve(constants.size());
             for (const auto &val : constants) {
               pred_keys.push_back(std::make_shared<ConstantValueExpression>(val));
             }
