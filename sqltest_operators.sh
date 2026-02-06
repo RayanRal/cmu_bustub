@@ -27,6 +27,10 @@ TESTS=(
     "test/sql/p3.07-simple-agg.slt"
     "test/sql/p3.08-group-agg-1.slt"
     "test/sql/p3.09-group-agg-2.slt"
+    "test/sql/p3.10-simple-join.slt"
+    "test/sql/p3.11-multi-way-join.slt"
+    "test/sql/p3.12-repeat-execute.slt"
+    "test/sql/p3.13-nested-index-join.slt"
 )
 
 # Move back to root to use relative paths correctly if needed, 
