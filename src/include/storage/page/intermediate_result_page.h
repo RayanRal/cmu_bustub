@@ -54,7 +54,7 @@ class IntermediateResultPage {
     free_space_offset_ -= total_tuple_size;
     tuple.SerializeTo(GetDataPtr() + free_space_offset_);
 
-    uint32_t *slot_ptr = reinterpret_cast<uint32_t *>(GetDataPtr() + header_size + num_tuples_ * slot_size);
+    auto slot_ptr = reinterpret_cast<uint32_t *>(GetDataPtr() + header_size + num_tuples_ * slot_size);
     slot_ptr[0] = free_space_offset_;
 
     num_tuples_++;
@@ -69,7 +69,7 @@ class IntermediateResultPage {
   auto GetTuple(uint32_t tuple_idx) const -> Tuple {
     uint32_t slot_size = sizeof(uint32_t);
     uint32_t header_size = sizeof(uint32_t) * 2;
-    const uint32_t *slot_ptr = reinterpret_cast<const uint32_t *>(GetDataPtr() + header_size + tuple_idx * slot_size);
+    auto slot_ptr = reinterpret_cast<const uint32_t *>(GetDataPtr() + header_size + tuple_idx * slot_size);
     uint32_t offset = slot_ptr[0];
 
     Tuple tuple;
