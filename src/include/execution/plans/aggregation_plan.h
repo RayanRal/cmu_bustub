@@ -105,7 +105,9 @@ struct AggregateKey {
   auto operator==(const AggregateKey &other) const -> bool {
     for (uint32_t i = 0; i < other.group_bys_.size(); i++) {
       if (group_bys_[i].CompareEquals(other.group_bys_[i]) != CmpBool::CmpTrue) {
-        return false;
+        if (!group_bys_[i].IsNull() || !other.group_bys_[i].IsNull()) {
+          return false;
+        }
       }
     }
     return true;

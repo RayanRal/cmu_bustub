@@ -11,9 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 #include <memory>
-#include "common/macros.h"
 
 #include "execution/executors/insert_executor.h"
+#include "type/value_factory.h"
 
 namespace bustub {
 
@@ -25,12 +25,14 @@ namespace bustub {
  */
 InsertExecutor::InsertExecutor(ExecutorContext *exec_ctx, const InsertPlanNode *plan,
                                std::unique_ptr<AbstractExecutor> &&child_executor)
-    : AbstractExecutor(exec_ctx) {
-  UNIMPLEMENTED("TODO(P3): Add implementation.");
-}
+    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {}
 
 /** Initialize the insert */
-void InsertExecutor::Init() { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+void InsertExecutor::Init() {
+  child_executor_->Init();
+  table_info_ = exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid()).get();
+  is_finished_ = false;
+}
 
 /**
  * Yield the number of rows inserted into the table.
@@ -44,7 +46,41 @@ void InsertExecutor::Init() { UNIMPLEMENTED("TODO(P3): Add implementation."); }
  */
 auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch,
                           size_t batch_size) -> bool {
-  UNIMPLEMENTED("TODO(P3): Add implementation.");
+  if (is_finished_) {
+    return false;
+  }
+
+  int32_t count = 0;
+  std::vector<Tuple> child_tuple_batch;
+  std::vector<RID> child_rid_batch;
+
+  while (child_executor_->Next(&child_tuple_batch, &child_rid_batch, batch_size)) {
+    for (const auto &tuple : child_tuple_batch) {
+      // Insert into table heap
+      std::optional<RID> rid = table_info_->table_->InsertTuple(TupleMeta{0, false}, tuple);
+      if (!rid.has_value()) {
+        continue;
+      }
+
+      // Update indexes
+      auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
+      for (auto &index_info : table_indexes) {
+        index_info->index_->InsertEntry(
+            tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs()), *rid,
+            exec_ctx_->GetTransaction());
+      }
+      count++;
+    }
+    child_tuple_batch.clear();
+    child_rid_batch.clear();
+  }
+
+  std::vector<Value> values;
+  values.emplace_back(ValueFactory::GetIntegerValue(count));
+  tuple_batch->emplace_back(Tuple(values, &GetOutputSchema()));
+
+  is_finished_ = true;
+  return true;
 }
 
 }  // namespace bustub
