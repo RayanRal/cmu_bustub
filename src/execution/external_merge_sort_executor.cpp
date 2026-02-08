@@ -103,7 +103,8 @@ void ExternalMergeSortExecutor<K>::Init() {
         auto end1 = runs[i].End();
         auto end2 = runs[i + 1].End();
 
-        std::optional<SortKey> key1, key2;
+        std::optional<SortKey> key1;
+        std::optional<SortKey> key2;
         if (it1 != end1) {
           key1 = GenerateSortKey(*it1, plan_->GetOrderBy(), child_executor_->GetOutputSchema());
         }
