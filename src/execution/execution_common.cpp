@@ -22,16 +22,53 @@ namespace bustub {
 
 TupleComparator::TupleComparator(std::vector<OrderBy> order_bys) : order_bys_(std::move(order_bys)) {}
 
-/** TODO(P3): Implement the comparison method */
-auto TupleComparator::operator()(const SortEntry &entry_a, const SortEntry &entry_b) const -> bool { return false; }
+auto TupleComparator::operator()(const SortEntry &entry_a, const SortEntry &entry_b) const -> bool {
+  const auto &key_a = entry_a.first;
+  const auto &key_b = entry_b.first;
+  for (size_t i = 0; i < order_bys_.size(); ++i) {
+    const auto &order_by = order_bys_[i];
+    OrderByType type = std::get<0>(order_by);
+    OrderByNullType null_type = std::get<1>(order_by);
+    const auto &val_a = key_a[i];
+    const auto &val_b = key_b[i];
+
+    if (val_a.IsNull() && val_b.IsNull()) {
+      continue;
+    }
+
+    bool is_asc = (type == OrderByType::ASC || type == OrderByType::DEFAULT);
+    bool nulls_first = (null_type == OrderByNullType::NULLS_FIRST || (null_type == OrderByNullType::DEFAULT && is_asc));
+
+    if (val_a.IsNull()) {
+      return nulls_first;
+    }
+    if (val_b.IsNull()) {
+      return !nulls_first;
+    }
+
+    if (val_a.CompareEquals(val_b) == CmpBool::CmpTrue) {
+      continue;
+    }
+
+    if (is_asc) {
+      return val_a.CompareLessThan(val_b) == CmpBool::CmpTrue;
+    }
+    return val_a.CompareGreaterThan(val_b) == CmpBool::CmpTrue;
+  }
+  return false;
+}
 
 /**
  * Generate sort key for a tuple based on the order by expressions.
- *
- * TODO(P3): Implement this method.
  */
 auto GenerateSortKey(const Tuple &tuple, const std::vector<OrderBy> &order_bys, const Schema &schema) -> SortKey {
-  return {};
+  SortKey key;
+  key.reserve(order_bys.size());
+  for (const auto &order_by : order_bys) {
+    const auto &expr = std::get<2>(order_by);
+    key.push_back(expr->Evaluate(&tuple, schema));
+  }
+  return key;
 }
 
 /**

@@ -14,14 +14,17 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
+
 #include "common/config.h"
 #include "common/macros.h"
 #include "execution/execution_common.h"
 #include "execution/executors/abstract_executor.h"
 #include "execution/plans/sort_plan.h"
 #include "storage/page/intermediate_result_page.h"
+#include "storage/page/page_guard.h"
 #include "storage/table/tuple.h"
 
 namespace bustub {
@@ -41,6 +44,8 @@ class MergeSortRun {
   /** Iterator for iterating on the sorted tuples in one run. */
   class Iterator {
     friend class MergeSortRun;
+    template <size_t K>
+    friend class ExternalMergeSortExecutor;
 
    public:
     Iterator() = default;
@@ -49,56 +54,84 @@ class MergeSortRun {
      * Advance the iterator to the next tuple. If the current sort page is exhausted, move to the
      * next sort page.
      */
-    auto operator++() -> Iterator & { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+    auto operator++() -> Iterator & {
+      tuple_idx_++;
+      if (tuple_idx_ >= num_tuples_in_page_) {
+        page_idx_++;
+        tuple_idx_ = 0;
+        if (page_idx_ < run_->pages_.size()) {
+          auto page_guard = run_->bpm_->ReadPage(run_->pages_[page_idx_]);
+          auto page = page_guard.As<IntermediateResultPage>();
+          num_tuples_in_page_ = page->GetNumTuples();
+          current_page_guard_ = std::move(page_guard);
+        } else {
+          num_tuples_in_page_ = 0;
+          current_page_guard_ = std::nullopt;
+        }
+      }
+      return *this;
+    }
 
     /**
      * Dereference the iterator to get the current tuple in the sorted run that the iterator is
      * pointing to.
      */
-    auto operator*() -> Tuple { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+    auto operator*() -> Tuple {
+      auto page = current_page_guard_->As<IntermediateResultPage>();
+      return page->GetTuple(tuple_idx_);
+    }
 
     /**
      * Checks whether two iterators are pointing to the same tuple in the same sorted run.
      */
-    auto operator==(const Iterator &other) const -> bool { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+    auto operator==(const Iterator &other) const -> bool {
+      return run_ == other.run_ && page_idx_ == other.page_idx_ && tuple_idx_ == other.tuple_idx_;
+    }
 
     /**
      * Checks whether two iterators are pointing to different tuples in a sorted run or iterating
      * on different sorted runs.
      */
-    auto operator!=(const Iterator &other) const -> bool { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+    auto operator!=(const Iterator &other) const -> bool { return !(*this == other); }
 
    private:
-    explicit Iterator(const MergeSortRun *run) : run_(run) {}
+    explicit Iterator(const MergeSortRun *run, size_t page_idx, uint32_t tuple_idx)
+        : run_(run), page_idx_(page_idx), tuple_idx_(tuple_idx) {
+      if (run_ != nullptr && page_idx_ < run_->pages_.size()) {
+        auto page_guard = run_->bpm_->ReadPage(run_->pages_[page_idx_]);
+        auto page = page_guard.As<IntermediateResultPage>();
+        num_tuples_in_page_ = page->GetNumTuples();
+        current_page_guard_ = std::move(page_guard);
+      }
+    }
 
     /** The sorted run that the iterator is iterating on. */
-    [[maybe_unused]] const MergeSortRun *run_;
+    const MergeSortRun *run_{nullptr};
 
-    /**
-     * TODO(P3): Add your own private members here. You may want something to record your current
-     * position in the sorted run. Also feel free to add additional constructors to initialize
-     * your private members.
-     */
+    size_t page_idx_{0};
+    uint32_t tuple_idx_{0};
+    uint32_t num_tuples_in_page_{0};
+    std::optional<ReadPageGuard> current_page_guard_{std::nullopt};
   };
 
   /**
    * Get an iterator pointing to the beginning of the sorted run, i.e. the first tuple.
    */
-  auto Begin() -> Iterator { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+  auto Begin() -> Iterator { return Iterator(this, 0, 0); }
 
   /**
    * Get an iterator pointing to the end of the sorted run, i.e. the position after the last tuple.
    */
-  auto End() -> Iterator { UNIMPLEMENTED("TODO(P3): Add implementation."); }
+  auto End() -> Iterator { return Iterator(this, pages_.size(), 0); }
 
- private:
   /** The page IDs of the sort pages that store the sorted tuples. */
   std::vector<page_id_t> pages_;
+
   /**
    * The buffer pool manager used to read sort pages. The buffer pool manager is responsible for
    * deleting the sort pages when they are no longer needed.
    */
-  [[maybe_unused]] BufferPoolManager *bpm_;
+  BufferPoolManager *bpm_;
 };
 
 /**
@@ -111,6 +144,8 @@ class ExternalMergeSortExecutor : public AbstractExecutor {
  public:
   ExternalMergeSortExecutor(ExecutorContext *exec_ctx, const SortPlanNode *plan,
                             std::unique_ptr<AbstractExecutor> &&child_executor);
+
+  ~ExternalMergeSortExecutor() override;
 
   void Init() override;
 
@@ -127,7 +162,14 @@ class ExternalMergeSortExecutor : public AbstractExecutor {
   /** Compares tuples based on the order-bys */
   TupleComparator cmp_;
 
-  /** TODO(P3): You will want to add your own private members here. */
+  /** Child executor */
+  std::unique_ptr<AbstractExecutor> child_executor_;
+
+  /** Sorted runs */
+  std::optional<MergeSortRun> final_run_;
+
+  /** Iterator for the final run */
+  MergeSortRun::Iterator final_iterator_;
 };
 
 }  // namespace bustub
