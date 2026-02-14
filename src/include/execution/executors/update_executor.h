@@ -50,5 +50,8 @@ class UpdateExecutor : public AbstractExecutor {
 
   /** The child executor to obtain value from */
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  /** Boolean to check if the update is finished */
+  bool is_finished_;
 };
 }  // namespace bustub

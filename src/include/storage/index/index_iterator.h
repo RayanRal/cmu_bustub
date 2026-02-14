@@ -34,6 +34,8 @@ class IndexIterator {
   // you may define your own constructor based on your member variables
   IndexIterator();
   IndexIterator(TracedBufferPoolManager *bpm, ReadPageGuard guard, int index, page_id_t page_id);
+  IndexIterator(IndexIterator &&) noexcept = default;
+  auto operator=(IndexIterator &&) noexcept -> IndexIterator & = default;
   ~IndexIterator();  // NOLINT
 
   auto IsEnd() -> bool;
