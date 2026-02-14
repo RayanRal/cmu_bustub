@@ -62,8 +62,12 @@ void WindowFunctionExecutor::Init() {
       for (const auto &expr : wf.partition_by_) {
         Value val_a = expr->Evaluate(&tuple_a, child_executor_->GetOutputSchema());
         Value val_b = expr->Evaluate(&tuple_b, child_executor_->GetOutputSchema());
-        if (val_a.CompareLessThan(val_b) == CmpBool::CmpTrue) return true;
-        if (val_a.CompareGreaterThan(val_b) == CmpBool::CmpTrue) return false;
+        if (val_a.CompareLessThan(val_b) == CmpBool::CmpTrue) {
+          return true;
+        }
+        if (val_a.CompareGreaterThan(val_b) == CmpBool::CmpTrue) {
+          return false;
+        }
       }
 
       // 2. Compare ORDER BY
@@ -74,20 +78,34 @@ void WindowFunctionExecutor::Init() {
         Value val_a = expr->Evaluate(&tuple_a, child_executor_->GetOutputSchema());
         Value val_b = expr->Evaluate(&tuple_b, child_executor_->GetOutputSchema());
 
-        if (val_a.IsNull() && val_b.IsNull()) continue;
+        if (val_a.IsNull() && val_b.IsNull()) {
+          continue;
+        }
         bool is_asc = (type == OrderByType::ASC || type == OrderByType::DEFAULT);
         bool nulls_first =
             (null_type == OrderByNullType::NULLS_FIRST || (null_type == OrderByNullType::DEFAULT && is_asc));
 
-        if (val_a.IsNull()) return nulls_first;
-        if (val_b.IsNull()) return !nulls_first;
+        if (val_a.IsNull()) {
+          return nulls_first;
+        }
+        if (val_b.IsNull()) {
+          return !nulls_first;
+        }
 
         if (is_asc) {
-          if (val_a.CompareLessThan(val_b) == CmpBool::CmpTrue) return true;
-          if (val_a.CompareGreaterThan(val_b) == CmpBool::CmpTrue) return false;
+          if (val_a.CompareLessThan(val_b) == CmpBool::CmpTrue) {
+            return true;
+          }
+          if (val_a.CompareGreaterThan(val_b) == CmpBool::CmpTrue) {
+            return false;
+          }
         } else {
-          if (val_a.CompareGreaterThan(val_b) == CmpBool::CmpTrue) return true;
-          if (val_a.CompareLessThan(val_b) == CmpBool::CmpTrue) return false;
+          if (val_a.CompareGreaterThan(val_b) == CmpBool::CmpTrue) {
+            return true;
+          }
+          if (val_a.CompareLessThan(val_b) == CmpBool::CmpTrue) {
+            return false;
+          }
         }
       }
       return false;
@@ -98,7 +116,9 @@ void WindowFunctionExecutor::Init() {
         Value val_a = expr->Evaluate(&child_tuples[idx_a], child_executor_->GetOutputSchema());
         Value val_b = expr->Evaluate(&child_tuples[idx_b], child_executor_->GetOutputSchema());
         if (val_a.CompareEquals(val_b) != CmpBool::CmpTrue) {
-          if (!val_a.IsNull() || !val_b.IsNull()) return false;
+          if (!val_a.IsNull() || !val_b.IsNull()) {
+            return false;
+          }
         }
       }
       return true;
@@ -110,7 +130,9 @@ void WindowFunctionExecutor::Init() {
         Value val_a = expr->Evaluate(&child_tuples[idx_a], child_executor_->GetOutputSchema());
         Value val_b = expr->Evaluate(&child_tuples[idx_b], child_executor_->GetOutputSchema());
         if (val_a.CompareEquals(val_b) != CmpBool::CmpTrue) {
-          if (!val_a.IsNull() || !val_b.IsNull()) return false;
+          if (!val_a.IsNull() || !val_b.IsNull()) {
+            return false;
+          }
         }
       }
       return true;
