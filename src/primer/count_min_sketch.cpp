@@ -36,7 +36,7 @@ CountMinSketch<KeyType>::CountMinSketch(uint32_t width, uint32_t depth) : width_
     sketch_.emplace_back(width_);
   }
 
-  /** @fall2025 PLEASE DO NOT MODIFY THE FOLLOWING */
+  /** @spring2026 PLEASE DO NOT MODIFY THE FOLLOWING */
   // Initialize seeded hash functions
   hash_functions_.reserve(depth_);
   for (size_t i = 0; i < depth_; i++) {

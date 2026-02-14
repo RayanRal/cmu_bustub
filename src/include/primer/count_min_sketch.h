@@ -88,7 +88,7 @@ class CountMinSketch {
   /** The 2D sketch matrix (depth rows × width columns) */
   std::vector<std::vector<std::atomic<uint32_t>>> sketch_;
 
-  /** @fall2025 PLEASE DO NOT MODIFY THE FOLLOWING */
+  /** @spring2026 PLEASE DO NOT MODIFY THE FOLLOWING */
   constexpr static size_t SEED_BASE = 15445;
 
   /**
