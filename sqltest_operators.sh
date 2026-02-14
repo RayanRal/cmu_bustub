@@ -31,6 +31,9 @@ TESTS=(
     "test/sql/p3.11-multi-way-join.slt"
     "test/sql/p3.12-repeat-execute.slt"
     "test/sql/p3.13-nested-index-join.slt"
+    "test/sql/p3.14-hash-join.slt"
+    "test/sql/p3.15-multi-way-hash-join.slt"
+    "test/sql/p3.16-sort-limit.slt"
 )
 
 # Move back to root to use relative paths correctly if needed, 
