@@ -79,5 +79,11 @@ class WindowFunctionExecutor : public AbstractExecutor {
 
   /** The child executor from which tuples are obtained */
   std::unique_ptr<AbstractExecutor> child_executor_;
+
+  /** The computed tuples to be returned by Next */
+  std::vector<Tuple> computed_tuples_;
+
+  /** The cursor for the computed_tuples_ */
+  size_t cursor_{0};
 };
 }  // namespace bustub

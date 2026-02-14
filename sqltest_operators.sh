@@ -34,6 +34,10 @@ TESTS=(
     "test/sql/p3.14-hash-join.slt"
     "test/sql/p3.15-multi-way-hash-join.slt"
     "test/sql/p3.16-sort-limit.slt"
+    "test/sql/p3.17-topn.slt"
+    "test/sql/p3.18-integration-1.slt"
+    "test/sql/p3.19-integration-2.slt"
+    "test/sql/p3.20-window-function.slt"
 )
 
 # Move back to root to use relative paths correctly if needed, 
