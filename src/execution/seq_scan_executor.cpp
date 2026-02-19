@@ -12,6 +12,8 @@
 
 #include "execution/executors/seq_scan_executor.h"
 #include "common/macros.h"
+#include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 
 namespace bustub {
 
@@ -42,18 +44,23 @@ auto SeqScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<
   tuple_batch->clear();
   rid_batch->clear();
 
+  auto *txn = exec_ctx_->GetTransaction();
+  auto *txn_mgr = exec_ctx_->GetTransactionManager();
+  auto table_info = exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid());
+
   while (!table_iter_->IsEnd() && tuple_batch->size() < batch_size) {
-    auto [meta, tuple] = table_iter_->GetTuple();
-    if (!meta.is_deleted_) {
-      if (plan_->filter_predicate_ != nullptr) {
-        auto value = plan_->filter_predicate_->Evaluate(&tuple, plan_->OutputSchema());
-        if (!value.IsNull() && value.GetAs<bool>()) {
-          tuple_batch->push_back(tuple);
-          rid_batch->push_back(table_iter_->GetRID());
+    RID rid = table_iter_->GetRID();
+    auto [meta, tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info->table_.get(), rid);
+
+    auto undo_logs = CollectUndoLogs(rid, meta, tuple, undo_link, txn, txn_mgr);
+    if (undo_logs.has_value()) {
+      auto reconstructed_tuple = ReconstructTuple(&table_info->schema_, tuple, meta, *undo_logs);
+      if (reconstructed_tuple.has_value()) {
+        if (plan_->filter_predicate_ == nullptr ||
+            plan_->filter_predicate_->Evaluate(&(*reconstructed_tuple), plan_->OutputSchema()).GetAs<bool>()) {
+          tuple_batch->push_back(std::move(*reconstructed_tuple));
+          rid_batch->push_back(rid);
         }
-      } else {
-        tuple_batch->push_back(tuple);
-        rid_batch->push_back(table_iter_->GetRID());
       }
     }
     ++(*table_iter_);

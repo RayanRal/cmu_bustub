@@ -89,7 +89,42 @@ auto GenerateSortKey(const Tuple &tuple, const std::vector<OrderBy> &order_bys, 
  */
 auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const TupleMeta &base_meta,
                       const std::vector<UndoLog> &undo_logs) -> std::optional<Tuple> {
-  UNIMPLEMENTED("not implemented");
+  std::vector<Value> values;
+  uint32_t col_count = schema->GetColumnCount();
+  values.reserve(col_count);
+
+  bool is_deleted = base_meta.is_deleted_;
+
+  for (uint32_t i = 0; i < col_count; ++i) {
+    values.push_back(base_tuple.GetValue(schema, i));
+  }
+
+  for (const auto &log : undo_logs) {
+    is_deleted = log.is_deleted_;
+    if (log.is_deleted_) {
+      continue;
+    }
+
+    std::vector<uint32_t> modified_cols;
+    for (uint32_t i = 0; i < col_count; ++i) {
+      if (log.modified_fields_[i]) {
+        modified_cols.push_back(i);
+      }
+    }
+
+    if (!modified_cols.empty()) {
+      Schema partial_schema = Schema::CopySchema(schema, modified_cols);
+      for (uint32_t i = 0; i < modified_cols.size(); ++i) {
+        values[modified_cols[i]] = log.tuple_.GetValue(&partial_schema, i);
+      }
+    }
+  }
+
+  if (is_deleted) {
+    return std::nullopt;
+  }
+
+  return std::make_optional<Tuple>(values, schema);
 }
 
 /**
@@ -106,7 +141,23 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
  */
 auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tuple, std::optional<UndoLink> undo_link,
                      Transaction *txn, TransactionManager *txn_mgr) -> std::optional<std::vector<UndoLog>> {
-  UNIMPLEMENTED("not implemented");
+  timestamp_t read_ts = txn->GetReadTs();
+  if (base_meta.ts_ <= read_ts || base_meta.ts_ == txn->GetTransactionTempTs()) {
+    return std::make_optional(std::vector<UndoLog>{});
+  }
+
+  std::vector<UndoLog> logs;
+  std::optional<UndoLink> current_link = undo_link;
+  while (current_link.has_value() && current_link->IsValid()) {
+    UndoLog log = txn_mgr->GetUndoLog(*current_link);
+    logs.push_back(log);
+    if (log.ts_ <= read_ts) {
+      return std::make_optional(std::move(logs));
+    }
+    current_link = log.prev_version_;
+  }
+
+  return std::nullopt;
 }
 
 /**
