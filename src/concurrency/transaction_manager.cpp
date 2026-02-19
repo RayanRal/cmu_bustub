@@ -47,7 +47,7 @@ auto TransactionManager::Begin(IsolationLevel isolation_level) -> Transaction * 
   auto *txn_ref = txn.get();
   txn_map_.insert(std::make_pair(txn_id, std::move(txn)));
 
-  // TODO(P4): set the timestamps here. Watermark updated below.
+  txn_ref->read_ts_ = last_commit_ts_.load();
 
   running_txns_.AddTxn(txn_ref->read_ts_);
   return txn_ref;
@@ -83,7 +83,7 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
 
   std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
 
-  // TODO(P4): set commit timestamp + update last committed timestamp here.
+  txn->commit_ts_ = ++last_commit_ts_;
 
   txn->state_ = TransactionState::COMMITTED;
   running_txns_.UpdateCommitTs(txn->commit_ts_);
