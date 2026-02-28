@@ -171,6 +171,13 @@ auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tupl
  * @param prev_version The undo link to the latest undo log of this tuple.
  * @return The generated undo log.
  */
+auto IsWriteWriteConflict(timestamp_t base_ts, timestamp_t read_ts, txn_id_t current_txn_id) -> bool {
+  if (base_ts >= TXN_START_ID) {
+    return base_ts != current_txn_id;
+  }
+  return base_ts > read_ts;
+}
+
 auto GenerateNewUndoLog(const Schema *schema, const Tuple *base_tuple, const Tuple *target_tuple, timestamp_t ts,
                         UndoLink prev_version) -> UndoLog {
   uint32_t col_count = schema->GetColumnCount();
@@ -294,7 +301,11 @@ void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const Table
 
     auto undo_link = txn_mgr->GetUndoLink(rid);
     while (undo_link.has_value() && undo_link->IsValid()) {
-      auto undo_log = txn_mgr->GetUndoLog(*undo_link);
+      auto undo_log_opt = txn_mgr->GetUndoLogOptional(*undo_link);
+      if (!undo_log_opt.has_value()) {
+        break;
+      }
+      auto undo_log = *undo_log_opt;
 
       std::string log_ts_str;
       if (undo_log.ts_ >= TXN_START_ID) {

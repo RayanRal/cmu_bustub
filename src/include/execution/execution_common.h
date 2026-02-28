@@ -53,6 +53,8 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
 auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tuple, std::optional<UndoLink> undo_link,
                      Transaction *txn, TransactionManager *txn_mgr) -> std::optional<std::vector<UndoLog>>;
 
+auto IsWriteWriteConflict(timestamp_t base_ts, timestamp_t read_ts, txn_id_t current_txn_id) -> bool;
+
 auto GenerateNewUndoLog(const Schema *schema, const Tuple *base_tuple, const Tuple *target_tuple, timestamp_t ts,
                         UndoLink prev_version) -> UndoLog;
 

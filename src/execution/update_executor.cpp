@@ -11,89 +11,91 @@
 //===----------------------------------------------------------------------===//
 
 #include <memory>
+#include <vector>
 
+#include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 #include "execution/executors/update_executor.h"
 #include "type/value_factory.h"
 
 namespace bustub {
 
-/**
- * Construct a new UpdateExecutor instance.
- * @param exec_ctx The executor context
- * @param plan The update plan to be executed
- * @param child_executor The child executor that feeds the update
- */
 UpdateExecutor::UpdateExecutor(ExecutorContext *exec_ctx, const UpdatePlanNode *plan,
                                std::unique_ptr<AbstractExecutor> &&child_executor)
-    : AbstractExecutor(exec_ctx), plan_(plan), child_executor_(std::move(child_executor)) {}
+    : AbstractExecutor(exec_ctx),
+      plan_{plan},
+      table_info_{exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid()).get()},
+      child_executor_{std::move(child_executor)},
+      is_finished_{false} {}
 
-/** Initialize the update */
 void UpdateExecutor::Init() {
   child_executor_->Init();
-  table_info_ = exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid()).get();
+  child_rids_.clear();
+  child_rid_idx_ = 0;
   is_finished_ = false;
+
+  std::vector<Tuple> child_tuples;
+  std::vector<RID> child_rids;
+  while (child_executor_->Next(&child_tuples, &child_rids, 10)) {
+    child_rids_.insert(child_rids_.end(), child_rids.begin(), child_rids.end());
+    child_tuples.clear();
+    child_rids.clear();
+  }
 }
 
-/**
- * Yield the number of rows updated in the table.
- * @param[out] tuple_batch The tuple batch with one integer indicating the number of rows updated in the table
- * @param[out] rid_batch The next tuple RID batch produced by the update (ignore, not used)
- * @param batch_size The number of tuples to be included in the batch (default: BUSTUB_BATCH_SIZE)
- * @return `true` if a tuple was produced, `false` if there are no more tuples
- *
- * NOTE: UpdateExecutor::Next() does not use the `rid_batch` out-parameter.
- * NOTE: UpdateExecutor::Next() returns true with the number of updated rows produced only once.
- */
 auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<bustub::RID> *rid_batch,
                           size_t batch_size) -> bool {
   if (is_finished_) {
     return false;
   }
 
+  auto *txn = exec_ctx_->GetTransaction();
+  auto *txn_mgr = exec_ctx_->GetTransactionManager();
+  auto temp_ts = txn->GetTransactionTempTs();
+  auto read_ts = txn->GetReadTs();
+
   int32_t count = 0;
-  std::vector<Tuple> child_tuple_batch;
-  std::vector<RID> child_rid_batch;
 
-  auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
+  for (const auto &rid : child_rids_) {
+    auto [meta, tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
 
-  while (child_executor_->Next(&child_tuple_batch, &child_rid_batch, batch_size)) {
-    for (size_t i = 0; i < child_tuple_batch.size(); ++i) {
-      const auto &old_tuple = child_tuple_batch[i];
-      const auto &old_rid = child_rid_batch[i];
-
-      // Evaluate expressions to get new values
-      std::vector<Value> values;
-      values.reserve(plan_->target_expressions_.size());
-      for (const auto &expr : plan_->target_expressions_) {
-        values.emplace_back(expr->Evaluate(&old_tuple, child_executor_->GetOutputSchema()));
-      }
-
-      Tuple new_tuple(values, &table_info_->schema_);
-
-      // Delete old tuple
-      table_info_->table_->UpdateTupleMeta(TupleMeta{0, true}, old_rid);
-
-      // Remove from indexes
-      for (auto &index_info : table_indexes) {
-        index_info->index_->DeleteEntry(
-            old_tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs()),
-            old_rid, exec_ctx_->GetTransaction());
-      }
-
-      // Insert new tuple
-      std::optional<RID> new_rid = table_info_->table_->InsertTuple(TupleMeta{0, false}, new_tuple);
-      if (new_rid.has_value()) {
-        // Insert into indexes
-        for (auto &index_info : table_indexes) {
-          index_info->index_->InsertEntry(
-              new_tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs()),
-              *new_rid, exec_ctx_->GetTransaction());
-        }
-        count++;
-      }
+    if (IsWriteWriteConflict(meta.ts_, read_ts, temp_ts)) {
+      txn->SetTainted();
+      throw ExecutionException("Write-write conflict in update");
     }
-    child_tuple_batch.clear();
-    child_rid_batch.clear();
+
+    // Evaluate target expressions to produce new_tuple
+    std::vector<Value> values;
+    values.reserve(plan_->target_expressions_.size());
+    for (const auto &expr : plan_->target_expressions_) {
+      values.emplace_back(expr->Evaluate(&tuple, child_executor_->GetOutputSchema()));
+    }
+    Tuple new_tuple(values, &table_info_->schema_);
+
+    if (meta.ts_ == temp_ts) {
+      // Self-modification
+      auto latest_undo_link = txn_mgr->GetUndoLink(rid);
+      if (latest_undo_link.has_value() && latest_undo_link->IsValid()) {
+        auto undo_log = txn_mgr->GetUndoLog(*latest_undo_link);
+        if (latest_undo_link->prev_txn_ == temp_ts) {
+          // Already has an undo log in this transaction.
+          auto updated_log = GenerateUpdatedUndoLog(&table_info_->schema_, &tuple, &new_tuple, undo_log);
+          txn->ModifyUndoLog(latest_undo_link->prev_log_idx_, updated_log);
+        }
+      }
+      // Update table heap in-place
+      table_info_->table_->UpdateTupleInPlace({temp_ts, false}, new_tuple, rid);
+    } else {
+      // First modification by this transaction
+      auto new_log = GenerateNewUndoLog(&table_info_->schema_, &tuple, &new_tuple, meta.ts_, undo_link.value_or(UndoLink{}));
+      auto log_link = txn->AppendUndoLog(new_log);
+
+      TupleMeta new_meta = {temp_ts, false};
+      UpdateTupleAndUndoLink(txn_mgr, rid, log_link, table_info_->table_.get(), txn, new_meta, new_tuple);
+    }
+
+    txn->AppendWriteSet(table_info_->oid_, rid);
+    count++;
   }
 
   std::vector<Value> result_values;

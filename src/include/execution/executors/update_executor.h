@@ -53,5 +53,9 @@ class UpdateExecutor : public AbstractExecutor {
 
   /** Boolean to check if the update is finished */
   bool is_finished_;
+
+  /** Buffered RIDs from child executor */
+  std::vector<RID> child_rids_;
+  [[maybe_unused]] size_t child_rid_idx_{0};
 };
 }  // namespace bustub

@@ -35,33 +35,24 @@
 
 namespace bustub {
 
-/**
- * Begins a new transaction.
- * @param isolation_level an optional isolation level of the transaction.
- * @return an initialized transaction
- */
 auto TransactionManager::Begin(IsolationLevel isolation_level) -> Transaction * {
-  std::unique_lock<std::shared_mutex> l(txn_map_mutex_);
+  std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
+
   auto txn_id = next_txn_id_++;
-  auto txn = std::make_unique<Transaction>(txn_id, isolation_level);
-  auto *txn_ref = txn.get();
-  txn_map_.insert(std::make_pair(txn_id, std::move(txn)));
+  auto txn = std::make_shared<Transaction>(txn_id, isolation_level);
+  auto read_ts = last_commit_ts_.load();
 
-  txn_ref->read_ts_ = last_commit_ts_.load();
+  txn->read_ts_ = read_ts;
 
-  running_txns_.AddTxn(txn_ref->read_ts_);
-  return txn_ref;
+  txn_map_[txn_id] = txn;
+
+  running_txns_.AddTxn(read_ts);
+
+  return txn.get();
 }
 
-/** @brief Verify if a txn satisfies serializability. We will not test this function and you can change / remove it as
- * you want. */
 auto TransactionManager::VerifyTxn(Transaction *txn) -> bool { return true; }
 
-/**
- * Commits a transaction.
- * @param txn the transaction to commit, the txn will be managed by the txn manager so no need to delete it by
- * yourself
- */
 auto TransactionManager::Commit(Transaction *txn) -> bool {
   std::unique_lock<std::mutex> commit_lck(commit_mutex_);
 
@@ -100,24 +91,143 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
   return true;
 }
 
-/**
- * Aborts a transaction
- * @param txn the transaction to abort, the txn will be managed by the txn manager so no need to delete it by yourself
- */
 void TransactionManager::Abort(Transaction *txn) {
   if (txn->state_ != TransactionState::RUNNING && txn->state_ != TransactionState::TAINTED) {
-    throw Exception("txn not in running / tainted state");
+    throw Exception("txn not in running or tainted state");
   }
-
-  // TODO(P4): Implement the abort logic!
 
   std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
   txn->state_ = TransactionState::ABORTED;
   running_txns_.RemoveTxn(txn->read_ts_);
+
+  // Revert changes
+  for (const auto &[table_oid, rids] : txn->write_set_) {
+    auto table_info = catalog_->GetTable(table_oid);
+    for (const auto &rid : rids) {
+      auto undo_link = GetUndoLink(rid);
+      auto meta = table_info->table_->GetTupleMeta(rid);
+
+      if (undo_link.has_value() && undo_link->IsValid() && undo_link->prev_txn_ == txn->GetTransactionId()) {
+        // This transaction modified the tuple and has an undo log.
+        auto undo_log = txn->GetUndoLog(undo_link->prev_log_idx_);
+
+        // Reconstruct the original tuple data
+        auto current_tuple = table_info->table_->GetTuple(rid).second;
+        std::vector<Value> values;
+        uint32_t col_count = table_info->schema_.GetColumnCount();
+        values.reserve(col_count);
+
+        // We need to fetch values from undo_log for modified fields, and keep current values for others.
+        // Wait, current values in heap are the NEW (to be aborted) values.
+        // But for fields NOT in modified_fields, they haven't been changed by this txn,
+        // so they are still the original committed values.
+        // So we just need to overwrite the modified fields with values from undo_log.
+
+        for (uint32_t i = 0; i < col_count; i++) {
+          if (undo_log.modified_fields_[i]) {
+            // Restore from undo log
+            // Need to find which index in undo_log.tuple_ corresponds to column i
+            // We can construct a partial schema for the undo log tuple.
+            // Or simpler: iterate modified_fields_ to build the schema.
+            // Optimizing: let's build the partial schema once.
+            std::vector<uint32_t> cols;
+            for (uint32_t j = 0; j < col_count; j++) {
+              if (undo_log.modified_fields_[j]) {
+                cols.push_back(j);
+              }
+            }
+            Schema log_schema = Schema::CopySchema(&table_info->schema_, cols);
+            // Now find the index of 'i' in 'cols'
+            uint32_t log_idx = 0;
+            bool found = false;
+            for(size_t k=0; k<cols.size(); k++) {
+                if(cols[k] == i) {
+                    log_idx = k;
+                    found = true;
+                    break;
+                }
+            }
+            if(found) {
+                values.push_back(undo_log.tuple_.GetValue(&log_schema, log_idx));
+            } else {
+                // Should not happen if modified_fields_[i] is true
+                values.push_back(current_tuple.GetValue(&table_info->schema_, i)); 
+            }
+          } else {
+            // Keep current value (it wasn't changed)
+            values.push_back(current_tuple.GetValue(&table_info->schema_, i));
+          }
+        }
+        Tuple restored_tuple(values, &table_info->schema_);
+
+        // Restore metadata
+        TupleMeta restored_meta = {undo_log.ts_, undo_log.is_deleted_};
+        table_info->table_->UpdateTupleInPlace(restored_meta, restored_tuple, rid);
+
+        // Restore undo link
+        if (undo_log.prev_version_.IsValid()) {
+            UpdateUndoLink(rid, undo_log.prev_version_);
+        } else {
+            // If previous version was invalid, it might mean this was the first modification to a fresh tuple?
+            // No, if prev_version is invalid, it means there was no undo log before this one.
+            // We should set the link to std::nullopt.
+            UpdateUndoLink(rid, std::nullopt);
+        }
+      } else {
+        // No undo log for this txn, but it's in the write set.
+        // Check if it's a fresh insert by this txn.
+        if (meta.ts_ == txn->GetTransactionId()) {
+          // It's a fresh insert. Mark as deleted with ts=0.
+          table_info->table_->UpdateTupleMeta({0, true}, rid);
+          UpdateUndoLink(rid, std::nullopt);
+        }
+      }
+    }
+  }
 }
 
-/** @brief Stop-the-world garbage collection. Will be called only when all transactions are not accessing the table
- * heap. */
-void TransactionManager::GarbageCollection() { UNIMPLEMENTED("not implemented"); }
+void TransactionManager::GarbageCollection() {
+  timestamp_t watermark = GetWatermark();
+  std::unordered_set<txn_id_t> needed_txns;
+
+  auto table_names = catalog_->GetTableNames();
+  for (const auto &table_name : table_names) {
+    auto table_info = catalog_->GetTable(table_name);
+    auto iter = table_info->table_->MakeIterator();
+    while (!iter.IsEnd()) {
+      RID rid = iter.GetRID();
+      auto [meta, tuple] = iter.GetTuple();
+      auto undo_link = GetUndoLink(rid);
+      if (undo_link.has_value() && undo_link->IsValid()) {
+        if (meta.ts_ > watermark) {
+          auto current_undo_link = *undo_link;
+          while (current_undo_link.IsValid()) {
+            needed_txns.insert(current_undo_link.prev_txn_);
+            auto undo_log = GetUndoLog(current_undo_link);
+            if (undo_log.ts_ <= watermark) {
+              break;
+            }
+            current_undo_link = undo_log.prev_version_;
+          }
+        }
+      }
+      ++iter;
+    }
+  }
+
+  std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
+  for (auto it = txn_map_.begin(); it != txn_map_.end();) {
+    txn_id_t txn_id = it->first;
+    auto txn = it->second;
+    if (txn->GetTransactionState() == TransactionState::RUNNING ||
+        txn->GetTransactionState() == TransactionState::TAINTED) {
+      ++it;
+    } else if (needed_txns.find(txn_id) != needed_txns.end()) {
+      ++it;
+    } else {
+      it = txn_map_.erase(it);
+    }
+  }
+}
 
 }  // namespace bustub
