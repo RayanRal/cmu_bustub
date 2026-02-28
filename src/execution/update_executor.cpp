@@ -51,18 +51,12 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
 
   auto *txn = exec_ctx_->GetTransaction();
   auto *txn_mgr = exec_ctx_->GetTransactionManager();
-  auto temp_ts = txn->GetTransactionTempTs();
-  auto read_ts = txn->GetReadTs();
 
   int32_t count = 0;
 
   for (const auto &rid : child_rids_) {
+    // Get the old tuple to evaluate expressions
     auto [meta, tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
-
-    if (IsWriteWriteConflict(meta.ts_, read_ts, temp_ts)) {
-      txn->SetTainted();
-      throw ExecutionException("Write-write conflict in update");
-    }
 
     // Evaluate target expressions to produce new_tuple
     std::vector<Value> values;
@@ -72,29 +66,7 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
     }
     Tuple new_tuple(values, &table_info_->schema_);
 
-    if (meta.ts_ == temp_ts) {
-      // Self-modification
-      auto latest_undo_link = txn_mgr->GetUndoLink(rid);
-      if (latest_undo_link.has_value() && latest_undo_link->IsValid()) {
-        auto undo_log = txn_mgr->GetUndoLog(*latest_undo_link);
-        if (latest_undo_link->prev_txn_ == temp_ts) {
-          // Already has an undo log in this transaction.
-          auto updated_log = GenerateUpdatedUndoLog(&table_info_->schema_, &tuple, &new_tuple, undo_log);
-          txn->ModifyUndoLog(latest_undo_link->prev_log_idx_, updated_log);
-        }
-      }
-      // Update table heap in-place
-      table_info_->table_->UpdateTupleInPlace({temp_ts, false}, new_tuple, rid);
-    } else {
-      // First modification by this transaction
-      auto new_log = GenerateNewUndoLog(&table_info_->schema_, &tuple, &new_tuple, meta.ts_, undo_link.value_or(UndoLink{}));
-      auto log_link = txn->AppendUndoLog(new_log);
-
-      TupleMeta new_meta = {temp_ts, false};
-      UpdateTupleAndUndoLink(txn_mgr, rid, log_link, table_info_->table_.get(), txn, new_meta, new_tuple);
-    }
-
-    txn->AppendWriteSet(table_info_->oid_, rid);
+    ModifyTuple(txn, txn_mgr, table_info_, rid, new_tuple, false);
     count++;
   }
 

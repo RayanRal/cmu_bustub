@@ -123,30 +123,23 @@ void TransactionManager::Abort(Transaction *txn) {
         // so they are still the original committed values.
         // So we just need to overwrite the modified fields with values from undo_log.
 
+        Schema log_schema = GetUndoLogSchema(&table_info->schema_, undo_log.modified_fields_);
         for (uint32_t i = 0; i < col_count; i++) {
           if (undo_log.modified_fields_[i]) {
             // Restore from undo log
             // Need to find which index in undo_log.tuple_ corresponds to column i
-            // We can construct a partial schema for the undo log tuple.
-            // Or simpler: iterate modified_fields_ to build the schema.
-            // Optimizing: let's build the partial schema once.
-            std::vector<uint32_t> cols;
-            for (uint32_t j = 0; j < col_count; j++) {
-              if (undo_log.modified_fields_[j]) {
-                cols.push_back(j);
-              }
-            }
-            Schema log_schema = Schema::CopySchema(&table_info->schema_, cols);
             // Now find the index of 'i' in 'cols'
+            // Since GetUndoLogSchema creates schema with only modified cols in order,
+            // we need to count how many true bits are before 'i'.
             uint32_t log_idx = 0;
             bool found = false;
-            for(size_t k=0; k<cols.size(); k++) {
-                if(cols[k] == i) {
-                    log_idx = k;
-                    found = true;
-                    break;
+            if(undo_log.modified_fields_[i]) {
+                found = true;
+                for(uint32_t k=0; k<i; k++) {
+                    if(undo_log.modified_fields_[k]) log_idx++;
                 }
             }
+            
             if(found) {
                 values.push_back(undo_log.tuple_.GetValue(&log_schema, log_idx));
             } else {
