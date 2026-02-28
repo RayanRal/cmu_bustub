@@ -65,8 +65,6 @@ auto TransactionManager::VerifyTxn(Transaction *txn) -> bool { return true; }
 auto TransactionManager::Commit(Transaction *txn) -> bool {
   std::unique_lock<std::mutex> commit_lck(commit_mutex_);
 
-  // TODO(P4): acquire commit ts!
-
   if (txn->state_ != TransactionState::RUNNING) {
     throw Exception("txn not in running state");
   }
@@ -79,13 +77,23 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
     }
   }
 
-  // TODO(P4): Implement the commit logic!
+  timestamp_t commit_ts = last_commit_ts_.load() + 1;
+
+  for (const auto &[table_oid, rids] : txn->write_set_) {
+    auto table_info = catalog_->GetTable(table_oid);
+    for (const auto &rid : rids) {
+      auto meta = table_info->table_->GetTupleMeta(rid);
+      meta.ts_ = commit_ts;
+      table_info->table_->UpdateTupleMeta(meta, rid);
+    }
+  }
 
   std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
 
-  txn->commit_ts_ = ++last_commit_ts_;
-
+  txn->commit_ts_ = commit_ts;
   txn->state_ = TransactionState::COMMITTED;
+  last_commit_ts_++;
+
   running_txns_.UpdateCommitTs(txn->commit_ts_);
   running_txns_.RemoveTxn(txn->read_ts_);
 
