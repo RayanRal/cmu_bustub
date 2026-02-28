@@ -54,13 +54,18 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
   std::vector<Tuple> child_tuple_batch;
   std::vector<RID> child_rid_batch;
 
+  auto *txn = exec_ctx_->GetTransaction();
+  auto temp_ts = txn->GetTransactionTempTs();
+
   while (child_executor_->Next(&child_tuple_batch, &child_rid_batch, batch_size)) {
     for (const auto &tuple : child_tuple_batch) {
       // Insert into table heap
-      std::optional<RID> rid = table_info_->table_->InsertTuple(TupleMeta{0, false}, tuple);
+      std::optional<RID> rid = table_info_->table_->InsertTuple(TupleMeta{temp_ts, false}, tuple);
       if (!rid.has_value()) {
         continue;
       }
+
+      txn->AppendWriteSet(table_info_->oid_, *rid);
 
       // Update indexes
       auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);

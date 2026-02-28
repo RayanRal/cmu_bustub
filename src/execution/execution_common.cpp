@@ -193,28 +193,56 @@ auto GenerateUpdatedUndoLog(const Schema *schema, const Tuple *base_tuple, const
 
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
                TableHeap *table_heap) {
-  // always use stderr for printing logs...
   fmt::println(stderr, "debug_hook: {}", info);
 
-  fmt::println(
-      stderr,
-      "You see this line of text because you have not implemented `TxnMgrDbg`. You should do this once you have "
-      "finished task 2. Implementing this helper function will save you a lot of time for debugging in later tasks.");
+  auto iter = table_heap->MakeIterator();
+  while (!iter.IsEnd()) {
+    RID rid = iter.GetRID();
+    auto [meta, tuple] = iter.GetTuple();
 
-  // We recommend implementing this function as traversing the table heap and print the version chain. An example output
-  // of our reference solution:
-  //
-  // debug_hook: before verify scan
-  // RID=0/0 ts=txn8 tuple=(1, <NULL>, <NULL>)
-  //   txn8@0 (2, _, _) ts=1
-  // RID=0/1 ts=3 tuple=(3, <NULL>, <NULL>)
-  //   txn5@0 <del> ts=2
-  //   txn3@0 (4, <NULL>, <NULL>) ts=1
-  // RID=0/2 ts=4 <del marker> tuple=(<NULL>, <NULL>, <NULL>)
-  //   txn7@0 (5, <NULL>, <NULL>) ts=3
-  // RID=0/3 ts=txn6 <del marker> tuple=(<NULL>, <NULL>, <NULL>)
-  //   txn6@0 (6, <NULL>, <NULL>) ts=2
-  //   txn3@1 (7, _, _) ts=1
+    std::string ts_str;
+    if (meta.ts_ >= TXN_START_ID) {
+      ts_str = fmt::format("txn{}", meta.ts_ ^ TXN_START_ID);
+    } else {
+      ts_str = fmt::format("{}", meta.ts_);
+    }
+
+    std::string tuple_str = meta.is_deleted_ ? "<del marker>" : tuple.ToString(&table_info->schema_);
+    fmt::println(stderr, "RID={}/{} ts={} tuple={}", rid.GetPageId(), rid.GetSlotNum(), ts_str, tuple_str);
+
+    auto undo_link = txn_mgr->GetUndoLink(rid);
+    while (undo_link.has_value() && undo_link->IsValid()) {
+      auto undo_log = txn_mgr->GetUndoLog(*undo_link);
+
+      std::string log_ts_str;
+      if (undo_log.ts_ >= TXN_START_ID) {
+        log_ts_str = fmt::format("txn{}", undo_log.ts_ ^ TXN_START_ID);
+      } else {
+        log_ts_str = fmt::format("{}", undo_log.ts_);
+      }
+
+      std::string log_tuple_str;
+      if (undo_log.is_deleted_) {
+        log_tuple_str = "<del>";
+      } else {
+        std::vector<uint32_t> modified_cols;
+        for (uint32_t i = 0; i < undo_log.modified_fields_.size(); ++i) {
+          if (undo_log.modified_fields_[i]) {
+            modified_cols.push_back(i);
+          }
+        }
+        Schema log_schema = Schema::CopySchema(&table_info->schema_, modified_cols);
+        log_tuple_str = undo_log.tuple_.ToString(&log_schema);
+      }
+
+      fmt::println(stderr, "  txn{}@{} {} ts={}", undo_link->prev_txn_ ^ TXN_START_ID, undo_link->prev_log_idx_,
+                   log_tuple_str, log_ts_str);
+
+      undo_link = undo_log.prev_version_;
+    }
+
+    ++iter;
+  }
 }
 
 }  // namespace bustub
