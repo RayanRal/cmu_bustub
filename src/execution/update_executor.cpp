@@ -54,6 +54,14 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
 
   int32_t count = 0;
 
+  struct UpdateInfo {
+    RID rid;
+    Tuple old_tuple;
+    Tuple new_tuple;
+    bool pk_changed;
+  };
+  std::vector<UpdateInfo> updates;
+
   for (const auto &rid : child_rids_) {
     // Get the old tuple to evaluate expressions
     auto [meta, tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
@@ -66,8 +74,91 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
     }
     Tuple new_tuple(values, &table_info_->schema_);
 
-    ModifyTuple(txn, txn_mgr, table_info_, rid, new_tuple, false);
+    // Check if Primary Key has changed
+    auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
+    IndexInfo *primary_key_index = nullptr;
+    for (auto &index_info : table_indexes) {
+      if (index_info->is_primary_key_) {
+        primary_key_index = index_info.get();
+        break;
+      }
+    }
+
+    bool pk_changed = false;
+    if (primary_key_index != nullptr) {
+      auto old_pk = tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_, primary_key_index->index_->GetKeyAttrs());
+      auto new_pk = new_tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_, primary_key_index->index_->GetKeyAttrs());
+      if (!IsTupleContentEqual(old_pk, new_pk)) {
+        pk_changed = true;
+      }
+    }
+    updates.push_back({rid, tuple, new_tuple, pk_changed});
     count++;
+  }
+
+  auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
+  IndexInfo *primary_key_index = nullptr;
+  for (auto &index_info : table_indexes) {
+    if (index_info->is_primary_key_) {
+      primary_key_index = index_info.get();
+      break;
+    }
+  }
+
+  // Phase 1: Apply all in-place updates and the "Delete" part of PK updates
+  for (auto &update : updates) {
+    if (!update.pk_changed) {
+      ModifyTuple(txn, txn_mgr, table_info_, update.rid, update.new_tuple, false);
+    } else {
+      ModifyTuple(txn, txn_mgr, table_info_, update.rid, Tuple{}, true);
+    }
+  }
+
+  // Phase 2: Apply the "Insert" part of PK updates
+  for (auto &update : updates) {
+    if (update.pk_changed) {
+      RID new_rid;
+      bool found_deleted_slot = false;
+      auto new_pk = update.new_tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_, primary_key_index->index_->GetKeyAttrs());
+      
+      std::vector<RID> result;
+      primary_key_index->index_->ScanKey(new_pk, &result, txn);
+      if (!result.empty()) {
+        new_rid = result[0];
+        auto [new_meta, new_base_tuple, new_undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), new_rid);
+        
+        if (IsWriteWriteConflict(new_meta.ts_, txn->GetReadTs(), txn->GetTransactionTempTs())) {
+            txn->SetTainted();
+            throw ExecutionException("Write-write conflict in update (insert part)");
+        }
+
+        if (!new_meta.is_deleted_) {
+          txn->SetTainted();
+          throw ExecutionException("Duplicate key violation in update");
+        }
+        found_deleted_slot = true;
+      }
+
+      if (found_deleted_slot) {
+        ModifyTuple(txn, txn_mgr, table_info_, new_rid, update.new_tuple, false);
+      } else {
+        std::optional<RID> opt_new_rid = table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, update.new_tuple);
+        if (!opt_new_rid.has_value()) {
+            throw ExecutionException("Failed to insert during update");
+        }
+        new_rid = *opt_new_rid;
+        txn->AppendWriteSet(table_info_->oid_, new_rid);
+
+        for (auto &index_info : table_indexes) {
+          auto key = update.new_tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+          bool inserted = index_info->index_->InsertEntry(key, new_rid, txn);
+          if (!inserted && index_info->is_primary_key_) {
+            txn->SetTainted();
+            throw ExecutionException("Duplicate key violation in update (index insert)");
+          }
+        }
+      }
+    }
   }
 
   std::vector<Value> result_values;

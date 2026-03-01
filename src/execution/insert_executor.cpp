@@ -14,6 +14,8 @@
 
 #include "execution/executors/insert_executor.h"
 #include "type/value_factory.h"
+#include "execution/execution_common.h"
+#include "concurrency/transaction_manager.h"
 
 namespace bustub {
 
@@ -55,12 +57,14 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
   std::vector<RID> child_rid_batch;
 
   auto *txn = exec_ctx_->GetTransaction();
-  auto temp_ts = txn->GetTransactionTempTs();
+  auto *txn_mgr = exec_ctx_->GetTransactionManager();
 
   while (child_executor_->Next(&child_tuple_batch, &child_rid_batch, batch_size)) {
     for (const auto &tuple : child_tuple_batch) {
       auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
-      
+      RID rid;
+      bool found_deleted_slot = false;
+
       // 1. Check if the tuple already exists in the primary key index
       for (auto &index_info : table_indexes) {
         if (index_info->is_primary_key_) {
@@ -68,28 +72,46 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
           std::vector<RID> result;
           index_info->index_->ScanKey(key, &result, txn);
           if (!result.empty()) {
-            txn->SetTainted();
-            throw ExecutionException("Duplicate key violation");
+            rid = result[0];
+            auto [meta, base_tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
+            
+            if (IsWriteWriteConflict(meta.ts_, txn->GetReadTs(), txn->GetTransactionTempTs())) {
+                txn->SetTainted();
+                throw ExecutionException("Write-write conflict in insert");
+            }
+
+            if (!meta.is_deleted_) {
+              txn->SetTainted();
+              throw ExecutionException("Duplicate key violation");
+            }
+            // Found a deleted slot with the same primary key, we can reuse it
+            found_deleted_slot = true;
+            break;
           }
         }
       }
 
-      // 2. Insert into table heap
-      std::optional<RID> rid = table_info_->table_->InsertTuple(TupleMeta{temp_ts, false}, tuple);
-      if (!rid.has_value()) {
-        continue;
-      }
+      if (found_deleted_slot) {
+        // 2. Reuse the deleted slot
+        ModifyTuple(txn, txn_mgr, table_info_, rid, tuple, false);
+      } else {
+        // 3. Normal insert into table heap
+        std::optional<RID> new_rid = table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, tuple);
+        if (!new_rid.has_value()) {
+          continue;
+        }
+        rid = *new_rid;
+        txn->AppendWriteSet(table_info_->oid_, rid);
 
-      txn->AppendWriteSet(table_info_->oid_, *rid);
-
-      // 3. Insert into indexes
-      for (auto &index_info : table_indexes) {
-        auto key = tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
-        bool inserted = index_info->index_->InsertEntry(key, *rid, exec_ctx_->GetTransaction());
-        
-        if (!inserted && index_info->is_primary_key_) {
-          txn->SetTainted();
-          throw ExecutionException("Duplicate key violation");
+        // 4. Insert into indexes
+        for (auto &index_info : table_indexes) {
+          auto key = tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+          bool inserted = index_info->index_->InsertEntry(key, rid, exec_ctx_->GetTransaction());
+          
+          if (!inserted && index_info->is_primary_key_) {
+            txn->SetTainted();
+            throw ExecutionException("Duplicate key violation");
+          }
         }
       }
       count++;

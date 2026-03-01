@@ -312,7 +312,7 @@ void ModifyTuple(Transaction *txn, TransactionManager *txn_mgr, const TableInfo 
       auto undo_log = txn_mgr->GetUndoLog(*latest_undo_link);
       if (latest_undo_link->prev_txn_ == temp_ts) {
         // Already has an undo log in this transaction.
-        auto updated_log = GenerateUpdatedUndoLog(&table_info->schema_, &tuple, target_tuple, undo_log);
+        auto updated_log = GenerateUpdatedUndoLog(&table_info->schema_, meta.is_deleted_ ? nullptr : &tuple, target_tuple, undo_log);
         txn->ModifyUndoLog(latest_undo_link->prev_log_idx_, updated_log);
       }
     }
@@ -326,7 +326,7 @@ void ModifyTuple(Transaction *txn, TransactionManager *txn_mgr, const TableInfo 
   } else {
     // First modification by this transaction
     auto new_log =
-        GenerateNewUndoLog(&table_info->schema_, &tuple, target_tuple, meta.ts_, undo_link.value_or(UndoLink{}));
+        GenerateNewUndoLog(&table_info->schema_, meta.is_deleted_ ? nullptr : &tuple, target_tuple, meta.ts_, undo_link.value_or(UndoLink{}));
     auto log_link = txn->AppendUndoLog(new_log);
 
     TupleMeta new_meta = {temp_ts, is_delete};
