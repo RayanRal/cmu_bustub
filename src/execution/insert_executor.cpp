@@ -59,7 +59,22 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
 
   while (child_executor_->Next(&child_tuple_batch, &child_rid_batch, batch_size)) {
     for (const auto &tuple : child_tuple_batch) {
-      // Insert into table heap
+      auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
+      
+      // 1. Check if the tuple already exists in the primary key index
+      for (auto &index_info : table_indexes) {
+        if (index_info->is_primary_key_) {
+          auto key = tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+          std::vector<RID> result;
+          index_info->index_->ScanKey(key, &result, txn);
+          if (!result.empty()) {
+            txn->SetTainted();
+            throw ExecutionException("Duplicate key violation");
+          }
+        }
+      }
+
+      // 2. Insert into table heap
       std::optional<RID> rid = table_info_->table_->InsertTuple(TupleMeta{temp_ts, false}, tuple);
       if (!rid.has_value()) {
         continue;
@@ -67,12 +82,15 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
 
       txn->AppendWriteSet(table_info_->oid_, *rid);
 
-      // Update indexes
-      auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
+      // 3. Insert into indexes
       for (auto &index_info : table_indexes) {
-        index_info->index_->InsertEntry(
-            tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs()), *rid,
-            exec_ctx_->GetTransaction());
+        auto key = tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+        bool inserted = index_info->index_->InsertEntry(key, *rid, exec_ctx_->GetTransaction());
+        
+        if (!inserted && index_info->is_primary_key_) {
+          txn->SetTainted();
+          throw ExecutionException("Duplicate key violation");
+        }
       }
       count++;
     }
