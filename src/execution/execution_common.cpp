@@ -171,9 +171,9 @@ auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tupl
  * @param prev_version The undo link to the latest undo log of this tuple.
  * @return The generated undo log.
  */
-auto IsWriteWriteConflict(timestamp_t base_ts, timestamp_t read_ts, txn_id_t current_txn_id) -> bool {
+auto IsWriteWriteConflict(timestamp_t base_ts, timestamp_t read_ts, timestamp_t temp_ts) -> bool {
   if (base_ts >= TXN_START_ID) {
-    return base_ts != current_txn_id;
+    return base_ts != temp_ts;
   }
   return base_ts > read_ts;
 }
@@ -232,17 +232,12 @@ auto GenerateUpdatedUndoLog(const Schema *schema, const Tuple *base_tuple, const
   std::vector<bool> modified_fields = log.modified_fields_;
 
   // existing_values stores the values from the committed version for already-modified fields.
-  Schema old_log_schema = GetUndoLogSchema(schema, modified_fields);
-  std::vector<uint32_t> old_modified_cols;
-  for (uint32_t i = 0; i < col_count; i++) {
-    if (modified_fields[i]) {
-      old_modified_cols.push_back(i);
-    }
-  }
-
+  Schema old_log_schema = GetUndoLogSchema(schema, log.modified_fields_);
   std::vector<Value> existing_values;
-  for (uint32_t i = 0; i < old_modified_cols.size(); i++) {
-    existing_values.push_back(log.tuple_.GetValue(&old_log_schema, i));
+  for (uint32_t i = 0, log_idx = 0; i < col_count; i++) {
+    if (log.modified_fields_[i]) {
+      existing_values.push_back(log.tuple_.GetValue(&old_log_schema, log_idx++));
+    }
   }
 
   if (target_tuple == nullptr) {
@@ -267,21 +262,16 @@ auto GenerateUpdatedUndoLog(const Schema *schema, const Tuple *base_tuple, const
   // Re-construct the full partial tuple from original committed values.
   std::vector<uint32_t> new_modified_cols;
   std::vector<Value> new_values;
-  uint32_t old_idx = 0;
-  for (uint32_t i = 0; i < col_count; i++) {
+  for (uint32_t i = 0, old_idx = 0; i < col_count; i++) {
     if (modified_fields[i]) {
       new_modified_cols.push_back(i);
-      if (old_idx < old_modified_cols.size() && old_modified_cols[old_idx] == i) {
+      if (log.modified_fields_[i]) {
         // Was already modified, use the value from the log (committed value).
-        new_values.push_back(existing_values[old_idx]);
-        old_idx++;
+        new_values.push_back(existing_values[old_idx++]);
       } else {
         // Newly modified in this step. Use the value from the current heap (base_tuple).
         if (base_tuple != nullptr) {
           new_values.push_back(base_tuple->GetValue(schema, i));
-        } else {
-          // If it was deleted in same txn, we already have all fields in the log.
-          // So this should not be reached for newly modified fields.
         }
       }
     }
@@ -312,28 +302,52 @@ void ModifyTuple(Transaction *txn, TransactionManager *txn_mgr, const TableInfo 
       auto undo_log = txn_mgr->GetUndoLog(*latest_undo_link);
       if (latest_undo_link->prev_txn_ == temp_ts) {
         // Already has an undo log in this transaction.
-        auto updated_log = GenerateUpdatedUndoLog(&table_info->schema_, meta.is_deleted_ ? nullptr : &tuple, target_tuple, undo_log);
+        auto updated_log =
+            GenerateUpdatedUndoLog(&table_info->schema_, meta.is_deleted_ ? nullptr : &tuple, target_tuple, undo_log);
         txn->ModifyUndoLog(latest_undo_link->prev_log_idx_, updated_log);
       }
     }
     // Update table heap
     if (is_delete) {
-      TupleMeta new_meta = {temp_ts, true};
-      table_info->table_->UpdateTupleMeta(new_meta, rid);
+      auto check_func = [temp_ts](const TupleMeta &meta, const Tuple &tuple, RID rid) -> bool {
+        return meta.ts_ == temp_ts;
+      };
+      if (!table_info->table_->UpdateTupleInPlace({temp_ts, true}, tuple, rid, check_func)) {
+        txn->SetTainted();
+        throw ExecutionException("Write-write conflict in delete (self-modification)");
+      }
     } else {
-      table_info->table_->UpdateTupleInPlace({temp_ts, false}, new_tuple, rid);
+      auto check_func = [temp_ts](const TupleMeta &meta, const Tuple &tuple, RID rid) -> bool {
+        return meta.ts_ == temp_ts;
+      };
+      if (!table_info->table_->UpdateTupleInPlace({temp_ts, false}, new_tuple, rid, check_func)) {
+        txn->SetTainted();
+        throw ExecutionException("Write-write conflict in update (self-modification)");
+      }
     }
   } else {
     // First modification by this transaction
-    auto new_log =
-        GenerateNewUndoLog(&table_info->schema_, meta.is_deleted_ ? nullptr : &tuple, target_tuple, meta.ts_, undo_link.value_or(UndoLink{}));
+    auto new_log = GenerateNewUndoLog(&table_info->schema_, meta.is_deleted_ ? nullptr : &tuple, target_tuple, meta.ts_,
+                                      undo_link.value_or(UndoLink{}));
     auto log_link = txn->AppendUndoLog(new_log);
 
     TupleMeta new_meta = {temp_ts, is_delete};
+    auto check_func = [read_ts, temp_ts](const TupleMeta &meta, const Tuple &tuple, RID rid,
+                                         std::optional<UndoLink> undo_link) -> bool {
+      return !IsWriteWriteConflict(meta.ts_, read_ts, temp_ts);
+    };
+
     if (is_delete) {
-      UpdateTupleAndUndoLink(txn_mgr, rid, log_link, table_info->table_.get(), txn, new_meta, tuple);
+      if (!UpdateTupleAndUndoLink(txn_mgr, rid, log_link, table_info->table_.get(), txn, new_meta, tuple, check_func)) {
+        txn->SetTainted();
+        throw ExecutionException("Write-write conflict in delete");
+      }
     } else {
-      UpdateTupleAndUndoLink(txn_mgr, rid, log_link, table_info->table_.get(), txn, new_meta, new_tuple);
+      if (!UpdateTupleAndUndoLink(txn_mgr, rid, log_link, table_info->table_.get(), txn, new_meta, new_tuple,
+                                  check_func)) {
+        txn->SetTainted();
+        throw ExecutionException("Write-write conflict in update");
+      }
     }
   }
 

@@ -134,7 +134,8 @@ auto UpdateTupleAndUndoLink(
   auto page = page_write_guard.AsMut<TablePage>();
 
   auto [base_meta, base_tuple] = page->GetTuple(rid);
-  if (check != nullptr && !check(base_meta, base_tuple, rid, undo_link)) {
+  auto base_undo_link = txn_mgr->GetUndoLink(rid);
+  if (check != nullptr && !check(base_meta, base_tuple, rid, base_undo_link)) {
     return false;
   }
 
@@ -143,7 +144,8 @@ auto UpdateTupleAndUndoLink(
     table_heap->UpdateTupleInPlaceWithLockAcquired(meta, tuple, rid, page);
   }
 
-  txn_mgr->UpdateUndoLink(rid, undo_link);
+  auto check_undo = [](std::optional<UndoLink> link) -> bool { return true; };
+  txn_mgr->UpdateUndoLink(rid, undo_link, check_undo);
 
   return true;
 }
@@ -153,12 +155,21 @@ auto UpdateTupleAndUndoLink(
  */
 auto GetTupleAndUndoLink(TransactionManager *txn_mgr, TableHeap *table_heap, RID rid)
     -> std::tuple<TupleMeta, Tuple, std::optional<UndoLink>> {
-  auto page_read_guard = table_heap->AcquireTablePageReadLock(rid);
-  auto page = page_read_guard.As<TablePage>();
-  auto [meta, tuple] = page->GetTuple(rid);
+  while (true) {
+    auto page_read_guard = table_heap->AcquireTablePageReadLock(rid);
+    auto page = page_read_guard.As<TablePage>();
+    auto [meta, tuple] = page->GetTuple(rid);
+    page_read_guard.Drop();
 
-  auto undo_link = txn_mgr->GetUndoLink(rid);
-  return std::make_tuple(meta, tuple, undo_link);
+    auto undo_link = txn_mgr->GetUndoLink(rid);
+
+    auto page_read_guard_2 = table_heap->AcquireTablePageReadLock(rid);
+    auto page_2 = page_read_guard_2.As<TablePage>();
+    auto meta_2 = page_2->GetTupleMeta(rid);
+    if (meta.ts_ == meta_2.ts_) {
+      return std::make_tuple(meta, tuple, undo_link);
+    }
+  }
 }
 
 }  // namespace bustub

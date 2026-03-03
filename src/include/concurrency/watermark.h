@@ -13,6 +13,7 @@
 #pragma once
 
 #include <functional>
+#include <mutex>  // NOLINT
 #include <queue>
 #include <unordered_map>
 #include <vector>
@@ -36,14 +37,20 @@ class Watermark {
 
   /** The caller should update commit ts before removing the txn from the watermark so that we can track watermark
    * correctly. */
-  auto UpdateCommitTs(timestamp_t commit_ts) { commit_ts_ = commit_ts; }
+  auto UpdateCommitTs(timestamp_t commit_ts) {
+    std::lock_guard<std::mutex> lck(latch_);
+    commit_ts_ = commit_ts;
+  }
 
   auto GetWatermark() -> timestamp_t {
+    std::lock_guard<std::mutex> lck(latch_);
     if (current_reads_.empty()) {
       return commit_ts_;
     }
     return watermark_;
   }
+
+  std::mutex latch_;
 
   timestamp_t commit_ts_;
 

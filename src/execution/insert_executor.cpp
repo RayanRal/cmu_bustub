@@ -12,10 +12,10 @@
 
 #include <memory>
 
+#include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 #include "execution/executors/insert_executor.h"
 #include "type/value_factory.h"
-#include "execution/execution_common.h"
-#include "concurrency/transaction_manager.h"
 
 namespace bustub {
 
@@ -68,16 +68,17 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       // 1. Check if the tuple already exists in the primary key index
       for (auto &index_info : table_indexes) {
         if (index_info->is_primary_key_) {
-          auto key = tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+          auto key =
+              tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
           std::vector<RID> result;
           index_info->index_->ScanKey(key, &result, txn);
           if (!result.empty()) {
             rid = result[0];
             auto [meta, base_tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
-            
+
             if (IsWriteWriteConflict(meta.ts_, txn->GetReadTs(), txn->GetTransactionTempTs())) {
-                txn->SetTainted();
-                throw ExecutionException("Write-write conflict in insert");
+              txn->SetTainted();
+              throw ExecutionException("Write-write conflict in insert");
             }
 
             if (!meta.is_deleted_) {
@@ -96,7 +97,8 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
         ModifyTuple(txn, txn_mgr, table_info_, rid, tuple, false);
       } else {
         // 3. Normal insert into table heap
-        std::optional<RID> new_rid = table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, tuple);
+        std::optional<RID> new_rid =
+            table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, tuple);
         if (!new_rid.has_value()) {
           continue;
         }
@@ -105,9 +107,10 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
 
         // 4. Insert into indexes
         for (auto &index_info : table_indexes) {
-          auto key = tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+          auto key =
+              tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
           bool inserted = index_info->index_->InsertEntry(key, rid, exec_ctx_->GetTransaction());
-          
+
           if (!inserted && index_info->is_primary_key_) {
             txn->SetTainted();
             throw ExecutionException("Duplicate key violation");

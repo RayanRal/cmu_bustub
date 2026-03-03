@@ -62,40 +62,6 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
   };
   std::vector<UpdateInfo> updates;
 
-  for (const auto &rid : child_rids_) {
-    // Get the old tuple to evaluate expressions
-    auto [meta, tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
-
-    // Evaluate target expressions to produce new_tuple
-    std::vector<Value> values;
-    values.reserve(plan_->target_expressions_.size());
-    for (const auto &expr : plan_->target_expressions_) {
-      values.emplace_back(expr->Evaluate(&tuple, child_executor_->GetOutputSchema()));
-    }
-    Tuple new_tuple(values, &table_info_->schema_);
-
-    // Check if Primary Key has changed
-    auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
-    IndexInfo *primary_key_index = nullptr;
-    for (auto &index_info : table_indexes) {
-      if (index_info->is_primary_key_) {
-        primary_key_index = index_info.get();
-        break;
-      }
-    }
-
-    bool pk_changed = false;
-    if (primary_key_index != nullptr) {
-      auto old_pk = tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_, primary_key_index->index_->GetKeyAttrs());
-      auto new_pk = new_tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_, primary_key_index->index_->GetKeyAttrs());
-      if (!IsTupleContentEqual(old_pk, new_pk)) {
-        pk_changed = true;
-      }
-    }
-    updates.push_back({rid, tuple, new_tuple, pk_changed});
-    count++;
-  }
-
   auto table_indexes = exec_ctx_->GetCatalog()->GetTableIndexes(table_info_->name_);
   IndexInfo *primary_key_index = nullptr;
   for (auto &index_info : table_indexes) {
@@ -103,6 +69,41 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       primary_key_index = index_info.get();
       break;
     }
+  }
+
+  for (const auto &rid : child_rids_) {
+    // Get the old tuple to evaluate expressions
+    auto [meta, tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
+    auto undo_logs = CollectUndoLogs(rid, meta, tuple, undo_link, txn, txn_mgr);
+    if (!undo_logs.has_value()) {
+      continue;
+    }
+    auto reconstructed_tuple = ReconstructTuple(&table_info_->schema_, tuple, meta, *undo_logs);
+    if (!reconstructed_tuple.has_value()) {
+      continue;
+    }
+
+    // Evaluate target expressions to produce new_tuple
+    std::vector<Value> values;
+    values.reserve(plan_->target_expressions_.size());
+    for (const auto &expr : plan_->target_expressions_) {
+      values.emplace_back(expr->Evaluate(&(*reconstructed_tuple), child_executor_->GetOutputSchema()));
+    }
+    Tuple new_tuple(values, &table_info_->schema_);
+
+    // Check if Primary Key has changed
+    bool pk_changed = false;
+    if (primary_key_index != nullptr) {
+      auto old_pk = reconstructed_tuple->KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_,
+                                                      primary_key_index->index_->GetKeyAttrs());
+      auto new_pk = new_tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_,
+                                           primary_key_index->index_->GetKeyAttrs());
+      if (!IsTupleContentEqual(old_pk, new_pk)) {
+        pk_changed = true;
+      }
+    }
+    updates.push_back({rid, *reconstructed_tuple, new_tuple, pk_changed});
+    count++;
   }
 
   // Phase 1: Apply all in-place updates and the "Delete" part of PK updates
@@ -119,17 +120,19 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
     if (update.pk_changed) {
       RID new_rid;
       bool found_deleted_slot = false;
-      auto new_pk = update.new_tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_, primary_key_index->index_->GetKeyAttrs());
-      
+      auto new_pk = update.new_tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_,
+                                                  primary_key_index->index_->GetKeyAttrs());
+
       std::vector<RID> result;
       primary_key_index->index_->ScanKey(new_pk, &result, txn);
       if (!result.empty()) {
         new_rid = result[0];
-        auto [new_meta, new_base_tuple, new_undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), new_rid);
-        
+        auto [new_meta, new_base_tuple, new_undo_link] =
+            GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), new_rid);
+
         if (IsWriteWriteConflict(new_meta.ts_, txn->GetReadTs(), txn->GetTransactionTempTs())) {
-            txn->SetTainted();
-            throw ExecutionException("Write-write conflict in update (insert part)");
+          txn->SetTainted();
+          throw ExecutionException("Write-write conflict in update (insert part)");
         }
 
         if (!new_meta.is_deleted_) {
@@ -142,15 +145,17 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       if (found_deleted_slot) {
         ModifyTuple(txn, txn_mgr, table_info_, new_rid, update.new_tuple, false);
       } else {
-        std::optional<RID> opt_new_rid = table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, update.new_tuple);
+        std::optional<RID> opt_new_rid =
+            table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, update.new_tuple);
         if (!opt_new_rid.has_value()) {
-            throw ExecutionException("Failed to insert during update");
+          throw ExecutionException("Failed to insert during update");
         }
         new_rid = *opt_new_rid;
         txn->AppendWriteSet(table_info_->oid_, new_rid);
 
         for (auto &index_info : table_indexes) {
-          auto key = update.new_tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+          auto key = update.new_tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_,
+                                                   index_info->index_->GetKeyAttrs());
           bool inserted = index_info->index_->InsertEntry(key, new_rid, txn);
           if (!inserted && index_info->is_primary_key_) {
             txn->SetTainted();

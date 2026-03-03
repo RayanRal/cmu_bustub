@@ -68,8 +68,10 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
       }
     }
 
-    auto [meta, tuple, undo_link] = GetTupleAndUndoLink(exec_ctx_->GetTransactionManager(), table_info_->table_.get(), rid);
-    auto undo_logs = CollectUndoLogs(rid, meta, tuple, undo_link, exec_ctx_->GetTransaction(), exec_ctx_->GetTransactionManager());
+    auto [meta, tuple, undo_link] =
+        GetTupleAndUndoLink(exec_ctx_->GetTransactionManager(), table_info_->table_.get(), rid);
+    auto undo_logs =
+        CollectUndoLogs(rid, meta, tuple, undo_link, exec_ctx_->GetTransaction(), exec_ctx_->GetTransactionManager());
     if (undo_logs.has_value()) {
       auto reconstructed_tuple = ReconstructTuple(&table_info_->schema_, tuple, meta, *undo_logs);
       if (reconstructed_tuple.has_value()) {

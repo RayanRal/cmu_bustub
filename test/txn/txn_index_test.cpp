@@ -278,6 +278,64 @@ TEST(TxnIndexTest, UpdatePrimaryKeyTest) {  // NOLINT
   // hidden tests...
 }
 
+TEST(TxnIndexTest, PrimaryKeySwapTest) {  // NOLINT
+  const std::string query = "SELECT * FROM maintable";
+
+  auto bustub = std::make_unique<BusTubInstance>();
+  EnsureIndexScan(*bustub);
+  Execute(*bustub, "CREATE TABLE maintable(col1 int primary key, col2 int)");
+  auto table_info = bustub->catalog_->GetTable("maintable");
+
+  auto txn1 = BeginTxn(*bustub, "txn1");
+  WithTxn(txn1, ExecuteTxn(*bustub, _var, _txn, "INSERT INTO maintable VALUES (1, 10), (2, 20)"));
+  WithTxn(txn1, CommitTxn(*bustub, _var, _txn));
+
+  auto txn2 = BeginTxn(*bustub, "txn2");
+  // Swap col1: 1 -> 2, 2 -> 1
+  WithTxn(txn2, ExecuteTxn(*bustub, _var, _txn, "UPDATE maintable SET col1 = 3 - col1"));
+  WithTxn(txn2, QueryShowResult(*bustub, _var, _txn, query, IntResult{{1, 20}, {2, 10}}));
+  WithTxn(txn2, QueryIndex(*bustub, _var, _txn, query, "col1", std::vector<int>{1, 2}, IntResult{{1, 20}, {2, 10}}));
+  WithTxn(txn2, CommitTxn(*bustub, _var, _txn));
+
+  auto txn3 = BeginTxn(*bustub, "txn3");
+  WithTxn(txn3, QueryShowResult(*bustub, _var, _txn, query, IntResult{{1, 20}, {2, 10}}));
+}
+
+TEST(TxnIndexTest, SequentialPKUpdateTest) {  // NOLINT
+  const std::string query = "SELECT * FROM maintable";
+
+  auto bustub = std::make_unique<BusTubInstance>();
+  EnsureIndexScan(*bustub);
+  Execute(*bustub, "CREATE TABLE maintable(col1 int primary key, col2 int)");
+
+  auto txn1 = BeginTxn(*bustub, "txn1");
+  WithTxn(txn1, ExecuteTxn(*bustub, _var, _txn, "INSERT INTO maintable VALUES (1, 10)"));
+  WithTxn(txn1, CommitTxn(*bustub, _var, _txn));
+
+  auto txn2 = BeginTxn(*bustub, "txn2");
+  WithTxn(txn2, ExecuteTxn(*bustub, _var, _txn, "UPDATE maintable SET col1 = 2"));
+  WithTxn(txn2, ExecuteTxn(*bustub, _var, _txn, "UPDATE maintable SET col1 = 3"));
+  WithTxn(txn2, QueryShowResult(*bustub, _var, _txn, query, IntResult{{3, 10}}));
+  WithTxn(txn2, QueryIndex(*bustub, _var, _txn, query, "col1", std::vector<int>{1, 2, 3}, IntResult{{}, {}, {3, 10}}));
+  WithTxn(txn2, CommitTxn(*bustub, _var, _txn));
+}
+
+TEST(TxnIndexTest, PKUpdateConflictTest) {  // NOLINT
+  const std::string query = "SELECT * FROM maintable";
+
+  auto bustub = std::make_unique<BusTubInstance>();
+  EnsureIndexScan(*bustub);
+  Execute(*bustub, "CREATE TABLE maintable(col1 int primary key, col2 int)");
+
+  auto txn1 = BeginTxn(*bustub, "txn1");
+  WithTxn(txn1, ExecuteTxn(*bustub, _var, _txn, "INSERT INTO maintable VALUES (1, 10), (2, 20)"));
+  WithTxn(txn1, CommitTxn(*bustub, _var, _txn));
+
+  auto txn2 = BeginTxn(*bustub, "txn2");
+  // Try to update col1=1 to col1=2, which already exists
+  WithTxn(txn2, ExecuteTxnTainted(*bustub, _var, _txn, "UPDATE maintable SET col1 = 2 WHERE col1 = 1"));
+}
+
 // NOLINTEND(bugprone-unchecked-optional-access))
 
 }  // namespace bustub

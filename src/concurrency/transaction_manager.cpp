@@ -73,9 +73,16 @@ auto TransactionManager::Commit(Transaction *txn) -> bool {
   for (const auto &[table_oid, rids] : txn->write_set_) {
     auto table_info = catalog_->GetTable(table_oid);
     for (const auto &rid : rids) {
-      auto meta = table_info->table_->GetTupleMeta(rid);
-      meta.ts_ = commit_ts;
-      table_info->table_->UpdateTupleMeta(meta, rid);
+      auto [meta, tuple, undo_link] = GetTupleAndUndoLink(this, table_info->table_.get(), rid);
+      if (meta.ts_ == txn->GetTransactionId()) {
+        auto check_func = [txn_id = txn->GetTransactionId()](const TupleMeta &meta, const Tuple &tuple, RID rid,
+                                                             std::optional<UndoLink> undo_link) -> bool {
+          return meta.ts_ == txn_id;
+        };
+        TupleMeta new_meta = meta;
+        new_meta.ts_ = commit_ts;
+        UpdateTupleAndUndoLink(this, rid, undo_link, table_info->table_.get(), txn, new_meta, tuple, check_func);
+      }
     }
   }
 
@@ -104,76 +111,44 @@ void TransactionManager::Abort(Transaction *txn) {
   for (const auto &[table_oid, rids] : txn->write_set_) {
     auto table_info = catalog_->GetTable(table_oid);
     for (const auto &rid : rids) {
-      auto undo_link = GetUndoLink(rid);
-      auto meta = table_info->table_->GetTupleMeta(rid);
+      auto check_func = [txn_id = txn->GetTransactionId()](const TupleMeta &meta, const Tuple &tuple, RID rid,
+                                                           std::optional<UndoLink> undo_link) -> bool {
+        return meta.ts_ == txn_id;
+      };
+
+      auto [meta, tuple, undo_link] = GetTupleAndUndoLink(this, table_info->table_.get(), rid);
+      if (meta.ts_ != txn->GetTransactionId()) {
+        continue;
+      }
 
       if (undo_link.has_value() && undo_link->IsValid() && undo_link->prev_txn_ == txn->GetTransactionId()) {
-        // This transaction modified the tuple and has an undo log.
         auto undo_log = txn->GetUndoLog(undo_link->prev_log_idx_);
-
-        // Reconstruct the original tuple data
-        auto current_tuple = table_info->table_->GetTuple(rid).second;
-        std::vector<Value> values;
-        uint32_t col_count = table_info->schema_.GetColumnCount();
-        values.reserve(col_count);
-
-        // We need to fetch values from undo_log for modified fields, and keep current values for others.
-        // Wait, current values in heap are the NEW (to be aborted) values.
-        // But for fields NOT in modified_fields, they haven't been changed by this txn,
-        // so they are still the original committed values.
-        // So we just need to overwrite the modified fields with values from undo_log.
-
-        Schema log_schema = GetUndoLogSchema(&table_info->schema_, undo_log.modified_fields_);
-        for (uint32_t i = 0; i < col_count; i++) {
-          if (undo_log.modified_fields_[i]) {
-            // Restore from undo log
-            // Need to find which index in undo_log.tuple_ corresponds to column i
-            // Now find the index of 'i' in 'cols'
-            // Since GetUndoLogSchema creates schema with only modified cols in order,
-            // we need to count how many true bits are before 'i'.
-            uint32_t log_idx = 0;
-            bool found = false;
-            if(undo_log.modified_fields_[i]) {
-                found = true;
-                for(uint32_t k=0; k<i; k++) {
-                    if(undo_log.modified_fields_[k]) log_idx++;
-                }
-            }
-            
-            if(found) {
-                values.push_back(undo_log.tuple_.GetValue(&log_schema, log_idx));
-            } else {
-                // Should not happen if modified_fields_[i] is true
-                values.push_back(current_tuple.GetValue(&table_info->schema_, i)); 
-            }
-          } else {
-            // Keep current value (it wasn't changed)
-            values.push_back(current_tuple.GetValue(&table_info->schema_, i));
-          }
-        }
-        Tuple restored_tuple(values, &table_info->schema_);
-
-        // Restore metadata
         TupleMeta restored_meta = {undo_log.ts_, undo_log.is_deleted_};
-        table_info->table_->UpdateTupleInPlace(restored_meta, restored_tuple, rid);
+        std::optional<UndoLink> prev_undo_link =
+            undo_log.prev_version_.IsValid() ? std::make_optional(undo_log.prev_version_) : std::nullopt;
 
-        // Restore undo link
-        if (undo_log.prev_version_.IsValid()) {
-            UpdateUndoLink(rid, undo_log.prev_version_);
+        Tuple restored_tuple;
+        if (undo_log.is_deleted_) {
+          restored_tuple = tuple;
         } else {
-            // If previous version was invalid, it might mean this was the first modification to a fresh tuple?
-            // No, if prev_version is invalid, it means there was no undo log before this one.
-            // We should set the link to std::nullopt.
-            UpdateUndoLink(rid, std::nullopt);
+          std::vector<Value> values;
+          uint32_t col_count = table_info->schema_.GetColumnCount();
+          values.reserve(col_count);
+          Schema log_schema = GetUndoLogSchema(&table_info->schema_, undo_log.modified_fields_);
+          for (uint32_t i = 0, log_idx = 0; i < col_count; i++) {
+            if (undo_log.modified_fields_[i]) {
+              values.push_back(undo_log.tuple_.GetValue(&log_schema, log_idx++));
+            } else {
+              values.push_back(tuple.GetValue(&table_info->schema_, i));
+            }
+          }
+          restored_tuple = Tuple(values, &table_info->schema_);
         }
+
+        UpdateTupleAndUndoLink(this, rid, prev_undo_link, table_info->table_.get(), txn, restored_meta, restored_tuple,
+                               check_func);
       } else {
-        // No undo log for this txn, but it's in the write set.
-        // Check if it's a fresh insert by this txn.
-        if (meta.ts_ == txn->GetTransactionId()) {
-          // It's a fresh insert. Mark as deleted with ts=0.
-          table_info->table_->UpdateTupleMeta({0, true}, rid);
-          UpdateUndoLink(rid, std::nullopt);
-        }
+        UpdateTupleAndUndoLink(this, rid, std::nullopt, table_info->table_.get(), txn, {0, true}, tuple, check_func);
       }
     }
   }
