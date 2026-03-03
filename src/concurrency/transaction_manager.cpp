@@ -51,7 +51,53 @@ auto TransactionManager::Begin(IsolationLevel isolation_level) -> Transaction * 
   return txn.get();
 }
 
-auto TransactionManager::VerifyTxn(Transaction *txn) -> bool { return true; }
+auto TransactionManager::VerifyTxn(Transaction *txn) -> bool {
+  if (txn->GetIsolationLevel() != IsolationLevel::SERIALIZABLE || txn->GetWriteSets().empty()) {
+    return true;
+  }
+
+  for (const auto &[table_oid, predicates] : txn->GetScanPredicates()) {
+    auto table_info = catalog_->GetTable(table_oid);
+    auto iter = table_info->table_->MakeIterator();
+    while (!iter.IsEnd()) {
+      RID rid = iter.GetRID();
+      auto [meta, tuple, undo_link] = GetTupleAndUndoLink(this, table_info->table_.get(), rid);
+
+      if (meta.ts_ > txn->GetReadTs() && meta.ts_ < TXN_START_ID) {
+        bool current_matches = false;
+        if (!meta.is_deleted_) {
+          for (const auto &pred : predicates) {
+            if (pred == nullptr || pred->Evaluate(&tuple, table_info->schema_).GetAs<bool>()) {
+              current_matches = true;
+              break;
+            }
+          }
+        }
+
+        bool old_matches = false;
+        auto undo_logs = CollectUndoLogs(rid, meta, tuple, undo_link, txn, this);
+        if (undo_logs.has_value()) {
+          auto reconstructed_tuple = ReconstructTuple(&table_info->schema_, tuple, meta, *undo_logs);
+          if (reconstructed_tuple.has_value()) {
+            for (const auto &pred : predicates) {
+              if (pred == nullptr || pred->Evaluate(&(*reconstructed_tuple), table_info->schema_).GetAs<bool>()) {
+                old_matches = true;
+                break;
+              }
+            }
+          }
+        }
+
+        if (current_matches || old_matches) {
+          return false;
+        }
+      }
+      ++iter;
+    }
+  }
+
+  return true;
+}
 
 auto TransactionManager::Commit(Transaction *txn) -> bool {
   std::unique_lock<std::mutex> commit_lck(commit_mutex_);

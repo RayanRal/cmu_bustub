@@ -32,6 +32,10 @@ IndexScanExecutor::IndexScanExecutor(ExecutorContext *exec_ctx, const IndexScanP
 }
 
 void IndexScanExecutor::Init() {
+  auto *txn = exec_ctx_->GetTransaction();
+  if (txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE) {
+    txn->AppendScanPredicate(plan_->table_oid_, plan_->filter_predicate_);
+  }
   is_point_lookup_ = !plan_->pred_keys_.empty();
   if (is_point_lookup_) {
     rids_.clear();

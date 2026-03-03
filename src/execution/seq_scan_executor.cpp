@@ -30,6 +30,11 @@ void SeqScanExecutor::Init() {
   auto *catalog = exec_ctx_->GetCatalog();
   auto table_info = catalog->GetTable(plan_->GetTableOid());
   table_iter_ = std::make_unique<TableIterator>(table_info->table_->MakeIterator());
+
+  auto *txn = exec_ctx_->GetTransaction();
+  if (txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE) {
+    txn->AppendScanPredicate(plan_->GetTableOid(), plan_->filter_predicate_);
+  }
 }
 
 /**
