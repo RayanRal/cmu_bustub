@@ -53,25 +53,28 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
 auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tuple, std::optional<UndoLink> undo_link,
                      Transaction *txn, TransactionManager *txn_mgr) -> std::optional<std::vector<UndoLog>>;
 
+auto IsWriteWriteConflict(timestamp_t base_ts, timestamp_t read_ts, timestamp_t temp_ts) -> bool;
+
 auto GenerateNewUndoLog(const Schema *schema, const Tuple *base_tuple, const Tuple *target_tuple, timestamp_t ts,
                         UndoLink prev_version) -> UndoLog;
 
 auto GenerateUpdatedUndoLog(const Schema *schema, const Tuple *base_tuple, const Tuple *target_tuple,
                             const UndoLog &log) -> UndoLog;
 
+auto GetUndoLogSchema(const Schema *base_schema, const std::vector<bool> &modified_fields) -> Schema;
+
+void ModifyTuple(Transaction *txn, TransactionManager *txn_mgr, const TableInfo *table_info, RID rid,
+                 const Tuple &new_tuple, bool is_delete);
+
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
                TableHeap *table_heap);
 
-// TODO(P4): Add new functions as needed... You are likely need to define some more functions.
-//
 // To give you a sense of what can be shared across executors / transaction manager, here are the
 // list of helper function names that we defined in the reference solution. You should come up with
 // your own when you go through the process.
 // * WalkUndoLogs
 // * Modify
-// * IsWriteWriteConflict
 // * GenerateNullTupleForSchema
-// * GetUndoLogSchema
 //
 // We do not provide the signatures for these functions because it depends on the your implementation
 // of other parts of the system. You do not need to define the same set of helper functions in

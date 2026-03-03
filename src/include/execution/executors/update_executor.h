@@ -52,6 +52,10 @@ class UpdateExecutor : public AbstractExecutor {
   std::unique_ptr<AbstractExecutor> child_executor_;
 
   /** Boolean to check if the update is finished */
-  bool is_finished_;
+  bool is_finished_{false};
+
+  /** Buffered RIDs from child executor */
+  std::vector<RID> child_rids_;
+  [[maybe_unused]] size_t child_rid_idx_{0};
 };
 }  // namespace bustub

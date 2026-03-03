@@ -12,7 +12,11 @@
 
 #pragma once
 
+#include <functional>
+#include <mutex>  // NOLINT
+#include <queue>
 #include <unordered_map>
+#include <vector>
 
 #include "concurrency/transaction.h"
 #include "storage/table/tuple.h"
@@ -33,20 +37,28 @@ class Watermark {
 
   /** The caller should update commit ts before removing the txn from the watermark so that we can track watermark
    * correctly. */
-  auto UpdateCommitTs(timestamp_t commit_ts) { commit_ts_ = commit_ts; }
+  auto UpdateCommitTs(timestamp_t commit_ts) {
+    std::lock_guard<std::mutex> lck(latch_);
+    commit_ts_ = commit_ts;
+  }
 
   auto GetWatermark() -> timestamp_t {
+    std::lock_guard<std::mutex> lck(latch_);
     if (current_reads_.empty()) {
       return commit_ts_;
     }
     return watermark_;
   }
 
+  std::mutex latch_;
+
   timestamp_t commit_ts_;
 
   timestamp_t watermark_;
 
   std::unordered_map<timestamp_t, int> current_reads_;
+
+  std::priority_queue<timestamp_t, std::vector<timestamp_t>, std::greater<>> min_heap_;
 };
 
 };  // namespace bustub

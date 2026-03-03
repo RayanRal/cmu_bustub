@@ -13,6 +13,8 @@
 #include "execution/executors/index_scan_executor.h"
 #include "catalog/schema.h"
 #include "common/macros.h"
+#include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 
 namespace bustub {
 
@@ -30,6 +32,10 @@ IndexScanExecutor::IndexScanExecutor(ExecutorContext *exec_ctx, const IndexScanP
 }
 
 void IndexScanExecutor::Init() {
+  auto *txn = exec_ctx_->GetTransaction();
+  if (txn->GetIsolationLevel() == IsolationLevel::SERIALIZABLE) {
+    txn->AppendScanPredicate(plan_->table_oid_, plan_->filter_predicate_);
+  }
   is_point_lookup_ = !plan_->pred_keys_.empty();
   if (is_point_lookup_) {
     rids_.clear();
@@ -66,17 +72,23 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
       }
     }
 
-    auto [meta, tuple] = table_info_->table_->GetTuple(rid);
-    if (!meta.is_deleted_) {
-      if (plan_->filter_predicate_ != nullptr) {
-        auto value = plan_->filter_predicate_->Evaluate(&tuple, plan_->OutputSchema());
-        if (!value.IsNull() && value.GetAs<bool>()) {
-          tuple_batch->push_back(tuple);
+    auto [meta, tuple, undo_link] =
+        GetTupleAndUndoLink(exec_ctx_->GetTransactionManager(), table_info_->table_.get(), rid);
+    auto undo_logs =
+        CollectUndoLogs(rid, meta, tuple, undo_link, exec_ctx_->GetTransaction(), exec_ctx_->GetTransactionManager());
+    if (undo_logs.has_value()) {
+      auto reconstructed_tuple = ReconstructTuple(&table_info_->schema_, tuple, meta, *undo_logs);
+      if (reconstructed_tuple.has_value()) {
+        if (plan_->filter_predicate_ != nullptr) {
+          auto value = plan_->filter_predicate_->Evaluate(&(*reconstructed_tuple), plan_->OutputSchema());
+          if (!value.IsNull() && value.GetAs<bool>()) {
+            tuple_batch->push_back(std::move(*reconstructed_tuple));
+            rid_batch->push_back(rid);
+          }
+        } else {
+          tuple_batch->push_back(std::move(*reconstructed_tuple));
           rid_batch->push_back(rid);
         }
-      } else {
-        tuple_batch->push_back(tuple);
-        rid_batch->push_back(rid);
       }
     }
   }
