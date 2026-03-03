@@ -122,7 +122,7 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       RID new_rid;
       bool found_deleted_slot = false;
       auto new_pk = update.new_tuple_.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_,
-                                                  primary_key_index->index_->GetKeyAttrs());
+                                                   primary_key_index->index_->GetKeyAttrs());
 
       std::vector<RID> result;
       primary_key_index->index_->ScanKey(new_pk, &result, txn);
@@ -156,7 +156,7 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
 
         for (auto &index_info : table_indexes) {
           auto key = update.new_tuple_.KeyFromTuple(table_info_->schema_, index_info->key_schema_,
-                                                   index_info->index_->GetKeyAttrs());
+                                                    index_info->index_->GetKeyAttrs());
           bool inserted = index_info->index_->InsertEntry(key, new_rid, txn);
           if (!inserted && index_info->is_primary_key_) {
             txn->SetTainted();
