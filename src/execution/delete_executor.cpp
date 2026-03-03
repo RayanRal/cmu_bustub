@@ -25,8 +25,7 @@ DeleteExecutor::DeleteExecutor(ExecutorContext *exec_ctx, const DeletePlanNode *
     : AbstractExecutor(exec_ctx),
       plan_(plan),
       child_executor_(std::move(child_executor)),
-      table_info_(exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid()).get()),
-      is_finished_(false) {}
+      table_info_(exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid()).get()) {}
 
 void DeleteExecutor::Init() {
   child_executor_->Init();

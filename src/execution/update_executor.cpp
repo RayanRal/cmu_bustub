@@ -25,8 +25,7 @@ UpdateExecutor::UpdateExecutor(ExecutorContext *exec_ctx, const UpdatePlanNode *
     : AbstractExecutor(exec_ctx),
       plan_{plan},
       table_info_{exec_ctx_->GetCatalog()->GetTable(plan_->GetTableOid()).get()},
-      child_executor_{std::move(child_executor)},
-      is_finished_{false} {}
+      child_executor_{std::move(child_executor)} {}
 
 void UpdateExecutor::Init() {
   child_executor_->Init();
