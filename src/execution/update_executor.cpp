@@ -55,10 +55,10 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
   int32_t count = 0;
 
   struct UpdateInfo {
-    RID rid;
-    Tuple old_tuple;
-    Tuple new_tuple;
-    bool pk_changed;
+    RID rid_;
+    Tuple old_tuple_;
+    Tuple new_tuple_;
+    bool pk_changed_;
   };
   std::vector<UpdateInfo> updates;
 
@@ -108,19 +108,20 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
 
   // Phase 1: Apply all in-place updates and the "Delete" part of PK updates
   for (auto &update : updates) {
-    if (!update.pk_changed) {
-      ModifyTuple(txn, txn_mgr, table_info_, update.rid, update.new_tuple, false);
+    if (!update.pk_changed_) {
+      ModifyTuple(txn, txn_mgr, table_info_, update.rid_, update.new_tuple_, false);
     } else {
-      ModifyTuple(txn, txn_mgr, table_info_, update.rid, Tuple{}, true);
+      ModifyTuple(txn, txn_mgr, table_info_, update.rid_, Tuple{}, true);
     }
   }
 
   // Phase 2: Apply the "Insert" part of PK updates
   for (auto &update : updates) {
-    if (update.pk_changed) {
+    if (update.pk_changed_) {
+      BUSTUB_ASSERT(primary_key_index != nullptr, "Primary key index must exist if PK changed");
       RID new_rid;
       bool found_deleted_slot = false;
-      auto new_pk = update.new_tuple.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_,
+      auto new_pk = update.new_tuple_.KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_,
                                                   primary_key_index->index_->GetKeyAttrs());
 
       std::vector<RID> result;
@@ -143,10 +144,10 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       }
 
       if (found_deleted_slot) {
-        ModifyTuple(txn, txn_mgr, table_info_, new_rid, update.new_tuple, false);
+        ModifyTuple(txn, txn_mgr, table_info_, new_rid, update.new_tuple_, false);
       } else {
         std::optional<RID> opt_new_rid =
-            table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, update.new_tuple);
+            table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, update.new_tuple_);
         if (!opt_new_rid.has_value()) {
           throw ExecutionException("Failed to insert during update");
         }
@@ -154,7 +155,7 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
         txn->AppendWriteSet(table_info_->oid_, new_rid);
 
         for (auto &index_info : table_indexes) {
-          auto key = update.new_tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_,
+          auto key = update.new_tuple_.KeyFromTuple(table_info_->schema_, index_info->key_schema_,
                                                    index_info->index_->GetKeyAttrs());
           bool inserted = index_info->index_->InsertEntry(key, new_rid, txn);
           if (!inserted && index_info->is_primary_key_) {

@@ -188,9 +188,8 @@ void TransactionManager::GarbageCollection() {
     txn_id_t txn_id = it->first;
     auto txn = it->second;
     if (txn->GetTransactionState() == TransactionState::RUNNING ||
-        txn->GetTransactionState() == TransactionState::TAINTED) {
-      ++it;
-    } else if (needed_txns.find(txn_id) != needed_txns.end()) {
+        txn->GetTransactionState() == TransactionState::TAINTED ||
+        needed_txns.find(txn_id) != needed_txns.end()) {
       ++it;
     } else {
       it = txn_map_.erase(it);

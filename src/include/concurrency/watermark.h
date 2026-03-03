@@ -58,7 +58,7 @@ class Watermark {
 
   std::unordered_map<timestamp_t, int> current_reads_;
 
-  std::priority_queue<timestamp_t, std::vector<timestamp_t>, std::greater<timestamp_t>> min_heap_;
+  std::priority_queue<timestamp_t, std::vector<timestamp_t>, std::greater<>> min_heap_;
 };
 
 };  // namespace bustub

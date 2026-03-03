@@ -51,7 +51,7 @@ class DeleteExecutor : public AbstractExecutor {
   const TableInfo *table_info_;
 
   /** Boolean to check if the delete is finished */
-  bool is_finished_;
+  bool is_finished_{false};
 
   /** Buffered RIDs from child executor */
   std::vector<RID> child_rids_;

@@ -52,7 +52,7 @@ class UpdateExecutor : public AbstractExecutor {
   std::unique_ptr<AbstractExecutor> child_executor_;
 
   /** Boolean to check if the update is finished */
-  bool is_finished_;
+  bool is_finished_{false};
 
   /** Buffered RIDs from child executor */
   std::vector<RID> child_rids_;
