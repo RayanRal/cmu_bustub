@@ -180,34 +180,33 @@ auto HashJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector
       }
     }
 
-    if (match_idx_ < current_matches_.size()) {
-      const auto &build_tuple = current_matches_[match_idx_];
+    const bool has_match = match_idx_ < current_matches_.size();
+    const bool emit_null_pad = !has_match && !matched_ && plan_->GetJoinType() == JoinType::LEFT;
+
+    if (has_match || emit_null_pad) {
       std::vector<Value> values;
       values.reserve(left_child_->GetOutputSchema().GetColumnCount() +
                      right_child_->GetOutputSchema().GetColumnCount());
       for (uint32_t i = 0; i < left_child_->GetOutputSchema().GetColumnCount(); i++) {
         values.push_back(probe_tuple.GetValue(&left_child_->GetOutputSchema(), i));
       }
-      for (uint32_t i = 0; i < right_child_->GetOutputSchema().GetColumnCount(); i++) {
-        values.push_back(build_tuple.GetValue(&right_child_->GetOutputSchema(), i));
-      }
-      tuple_batch->emplace_back(values, &GetOutputSchema());
-      rid_batch->emplace_back();
-      match_idx_++;
-    } else {
-      if (!matched_ && plan_->GetJoinType() == JoinType::LEFT) {
-        std::vector<Value> values;
-        values.reserve(left_child_->GetOutputSchema().GetColumnCount() +
-                       right_child_->GetOutputSchema().GetColumnCount());
-        for (uint32_t i = 0; i < left_child_->GetOutputSchema().GetColumnCount(); i++) {
-          values.push_back(probe_tuple.GetValue(&left_child_->GetOutputSchema(), i));
+      if (has_match) {
+        const auto &build_tuple = current_matches_[match_idx_];
+        for (uint32_t i = 0; i < right_child_->GetOutputSchema().GetColumnCount(); i++) {
+          values.push_back(build_tuple.GetValue(&right_child_->GetOutputSchema(), i));
         }
+      } else {
         for (uint32_t i = 0; i < right_child_->GetOutputSchema().GetColumnCount(); i++) {
           values.push_back(ValueFactory::GetNullValueByType(right_child_->GetOutputSchema().GetColumn(i).GetType()));
         }
-        tuple_batch->emplace_back(values, &GetOutputSchema());
-        rid_batch->emplace_back();
       }
+      tuple_batch->emplace_back(values, &GetOutputSchema());
+      rid_batch->emplace_back();
+    }
+
+    if (has_match) {
+      match_idx_++;
+    } else {
       probe_idx_++;
       match_idx_ = 0;
       matched_ = false;

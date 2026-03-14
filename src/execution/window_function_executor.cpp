@@ -45,7 +45,6 @@ void WindowFunctionExecutor::Init() {
     original_indices[i] = i;
   }
 
-  // Store results for each window function: map from column index -> vector of values
   std::unordered_map<uint32_t, std::vector<Value>> window_results;
 
   for (const auto &pair : plan_->window_functions_) {
@@ -53,12 +52,10 @@ void WindowFunctionExecutor::Init() {
     const auto &wf = pair.second;
     std::vector<Value> results(num_tuples);
 
-    // Sort original_indices based on (partition_by, order_by)
     std::sort(original_indices.begin(), original_indices.end(), [&](uint32_t idx_a, uint32_t idx_b) {
       const auto &tuple_a = child_tuples[idx_a];
       const auto &tuple_b = child_tuples[idx_b];
 
-      // 1. Compare PARTITION BY
       for (const auto &expr : wf.partition_by_) {
         Value val_a = expr->Evaluate(&tuple_a, child_executor_->GetOutputSchema());
         Value val_b = expr->Evaluate(&tuple_b, child_executor_->GetOutputSchema());
@@ -70,7 +67,6 @@ void WindowFunctionExecutor::Init() {
         }
       }
 
-      // 2. Compare ORDER BY
       for (const auto &order_by : wf.order_by_) {
         OrderByType type = std::get<0>(order_by);
         OrderByNullType null_type = std::get<1>(order_by);
@@ -138,6 +134,51 @@ void WindowFunctionExecutor::Init() {
       return true;
     };
 
+    auto accumulate = [&](Value &acc, const Value &val) {
+      switch (wf.type_) {
+        case WindowFunctionType::CountStarAggregate:
+          acc = acc.Add(ValueFactory::GetIntegerValue(1));
+          break;
+        case WindowFunctionType::CountAggregate:
+          if (!val.IsNull()) {
+            acc = acc.IsNull() ? ValueFactory::GetIntegerValue(1) : acc.Add(ValueFactory::GetIntegerValue(1));
+          }
+          break;
+        case WindowFunctionType::SumAggregate:
+          if (!val.IsNull()) {
+            acc = acc.IsNull() ? val : acc.Add(val);
+          }
+          break;
+        case WindowFunctionType::MinAggregate:
+          if (!val.IsNull()) {
+            acc = (acc.IsNull() || val.CompareLessThan(acc) == CmpBool::CmpTrue) ? val : acc;
+          }
+          break;
+        case WindowFunctionType::MaxAggregate:
+          if (!val.IsNull()) {
+            acc = (acc.IsNull() || val.CompareGreaterThan(acc) == CmpBool::CmpTrue) ? val : acc;
+          }
+          break;
+        default:
+          break;
+      }
+    };
+
+    auto finalize_acc = [&](Value acc) -> Value {
+      if (acc.IsNull() &&
+          (wf.type_ == WindowFunctionType::CountAggregate || wf.type_ == WindowFunctionType::CountStarAggregate)) {
+        return ValueFactory::GetIntegerValue(0);
+      }
+      return acc;
+    };
+
+    auto init_acc = [&](const Value &first_val) -> Value {
+      if (wf.type_ == WindowFunctionType::CountStarAggregate) {
+        return ValueFactory::GetIntegerValue(0);
+      }
+      return ValueFactory::GetNullValueByType(first_val.GetTypeId());
+    };
+
     if (wf.order_by_.empty()) {
       uint32_t start = 0;
       while (start < num_tuples) {
@@ -146,49 +187,14 @@ void WindowFunctionExecutor::Init() {
           end++;
         }
 
-        Value acc;
-        if (wf.type_ == WindowFunctionType::CountStarAggregate) {
-          acc = ValueFactory::GetIntegerValue(0);
-        } else {
-          acc = ValueFactory::GetNullValueByType(
-              wf.function_->Evaluate(&child_tuples[original_indices[start]], child_executor_->GetOutputSchema())
-                  .GetTypeId());
-        }
-
+        Value first_val =
+            wf.function_->Evaluate(&child_tuples[original_indices[start]], child_executor_->GetOutputSchema());
+        Value acc = init_acc(first_val);
         for (uint32_t i = start; i < end; ++i) {
           Value val = wf.function_->Evaluate(&child_tuples[original_indices[i]], child_executor_->GetOutputSchema());
-          switch (wf.type_) {
-            case WindowFunctionType::CountStarAggregate:
-              acc = acc.Add(ValueFactory::GetIntegerValue(1));
-              break;
-            case WindowFunctionType::CountAggregate:
-              if (!val.IsNull()) {
-                acc = acc.IsNull() ? ValueFactory::GetIntegerValue(1) : acc.Add(ValueFactory::GetIntegerValue(1));
-              }
-              break;
-            case WindowFunctionType::SumAggregate:
-              if (!val.IsNull()) {
-                acc = acc.IsNull() ? val : acc.Add(val);
-              }
-              break;
-            case WindowFunctionType::MinAggregate:
-              if (!val.IsNull()) {
-                acc = (acc.IsNull() || val.CompareLessThan(acc) == CmpBool::CmpTrue) ? val : acc;
-              }
-              break;
-            case WindowFunctionType::MaxAggregate:
-              if (!val.IsNull()) {
-                acc = (acc.IsNull() || val.CompareGreaterThan(acc) == CmpBool::CmpTrue) ? val : acc;
-              }
-              break;
-            default:
-              break;
-          }
+          accumulate(acc, val);
         }
-        if (acc.IsNull() &&
-            (wf.type_ == WindowFunctionType::CountAggregate || wf.type_ == WindowFunctionType::CountStarAggregate)) {
-          acc = ValueFactory::GetIntegerValue(0);
-        }
+        acc = finalize_acc(acc);
         for (uint32_t i = start; i < end; ++i) {
           results[original_indices[i]] = acc;
         }
@@ -220,51 +226,16 @@ void WindowFunctionExecutor::Init() {
             }
           } else {
             // BusTub reference solution seems to use RANGE behavior for aggregates with ORDER BY.
-            // Let's compute up to the end of the peer group.
             for (uint32_t j = i; j < peer_group_end; ++j) {
               Value val =
                   wf.function_->Evaluate(&child_tuples[original_indices[j]], child_executor_->GetOutputSchema());
               if (partition_count == 0 && j == i) {
-                if (wf.type_ == WindowFunctionType::CountStarAggregate) {
-                  acc = ValueFactory::GetIntegerValue(0);
-                } else {
-                  acc = ValueFactory::GetNullValueByType(val.GetTypeId());
-                }
+                acc = init_acc(val);
               }
               partition_count++;
-              switch (wf.type_) {
-                case WindowFunctionType::CountStarAggregate:
-                  acc = acc.Add(ValueFactory::GetIntegerValue(1));
-                  break;
-                case WindowFunctionType::CountAggregate:
-                  if (!val.IsNull()) {
-                    acc = acc.IsNull() ? ValueFactory::GetIntegerValue(1) : acc.Add(ValueFactory::GetIntegerValue(1));
-                  }
-                  break;
-                case WindowFunctionType::SumAggregate:
-                  if (!val.IsNull()) {
-                    acc = acc.IsNull() ? val : acc.Add(val);
-                  }
-                  break;
-                case WindowFunctionType::MinAggregate:
-                  if (!val.IsNull()) {
-                    acc = (acc.IsNull() || val.CompareLessThan(acc) == CmpBool::CmpTrue) ? val : acc;
-                  }
-                  break;
-                case WindowFunctionType::MaxAggregate:
-                  if (!val.IsNull()) {
-                    acc = (acc.IsNull() || val.CompareGreaterThan(acc) == CmpBool::CmpTrue) ? val : acc;
-                  }
-                  break;
-                default:
-                  break;
-              }
+              accumulate(acc, val);
             }
-            Value res = acc;
-            if (res.IsNull() && (wf.type_ == WindowFunctionType::CountAggregate ||
-                                 wf.type_ == WindowFunctionType::CountStarAggregate)) {
-              res = ValueFactory::GetIntegerValue(0);
-            }
+            Value res = finalize_acc(acc);
             for (uint32_t j = i; j < peer_group_end; ++j) {
               results[original_indices[j]] = res;
             }

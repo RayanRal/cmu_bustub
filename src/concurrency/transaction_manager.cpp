@@ -153,7 +153,6 @@ void TransactionManager::Abort(Transaction *txn) {
   txn->state_ = TransactionState::ABORTED;
   running_txns_.RemoveTxn(txn->read_ts_);
 
-  // Revert changes
   for (const auto &[table_oid, rids] : txn->write_set_) {
     auto table_info = catalog_->GetTable(table_oid);
     for (const auto &rid : rids) {
