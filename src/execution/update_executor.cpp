@@ -71,7 +71,6 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
   }
 
   for (const auto &rid : child_rids_) {
-    // Get the old tuple to evaluate expressions
     auto [meta, tuple, undo_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
     auto undo_logs = CollectUndoLogs(rid, meta, tuple, undo_link, txn, txn_mgr);
     if (!undo_logs.has_value()) {
@@ -82,7 +81,6 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       continue;
     }
 
-    // Evaluate target expressions to produce new_tuple
     std::vector<Value> values;
     values.reserve(plan_->target_expressions_.size());
     for (const auto &expr : plan_->target_expressions_) {
@@ -90,7 +88,6 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
     }
     Tuple new_tuple(values, &table_info_->schema_);
 
-    // Check if Primary Key has changed
     bool pk_changed = false;
     if (primary_key_index != nullptr) {
       auto old_pk = reconstructed_tuple->KeyFromTuple(table_info_->schema_, primary_key_index->key_schema_,

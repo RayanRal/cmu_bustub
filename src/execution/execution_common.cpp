@@ -160,6 +160,13 @@ auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tupl
   return std::nullopt;
 }
 
+auto IsWriteWriteConflict(timestamp_t base_ts, timestamp_t read_ts, timestamp_t temp_ts) -> bool {
+  if (base_ts >= TXN_START_ID) {
+    return base_ts != temp_ts;
+  }
+  return base_ts > read_ts;
+}
+
 /**
  * @brief Generates a new undo log as the transaction tries to modify this tuple at the first time.
  *
@@ -171,13 +178,6 @@ auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tupl
  * @param prev_version The undo link to the latest undo log of this tuple.
  * @return The generated undo log.
  */
-auto IsWriteWriteConflict(timestamp_t base_ts, timestamp_t read_ts, timestamp_t temp_ts) -> bool {
-  if (base_ts >= TXN_START_ID) {
-    return base_ts != temp_ts;
-  }
-  return base_ts > read_ts;
-}
-
 auto GenerateNewUndoLog(const Schema *schema, const Tuple *base_tuple, const Tuple *target_tuple, timestamp_t ts,
                         UndoLink prev_version) -> UndoLog {
   uint32_t col_count = schema->GetColumnCount();

@@ -65,7 +65,6 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       RID rid;
       bool found_deleted_slot = false;
 
-      // 1. Check if the tuple already exists in the primary key index
       for (auto &index_info : table_indexes) {
         if (index_info->is_primary_key_) {
           auto key =
@@ -85,7 +84,6 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
               txn->SetTainted();
               throw ExecutionException("Duplicate key violation");
             }
-            // Found a deleted slot with the same primary key, we can reuse it
             found_deleted_slot = true;
             break;
           }
@@ -93,10 +91,8 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       }
 
       if (found_deleted_slot) {
-        // 2. Reuse the deleted slot
         ModifyTuple(txn, txn_mgr, table_info_, rid, tuple, false);
       } else {
-        // 3. Normal insert into table heap
         std::optional<RID> new_rid =
             table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, tuple);
         if (!new_rid.has_value()) {
@@ -105,7 +101,6 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
         rid = *new_rid;
         txn->AppendWriteSet(table_info_->oid_, rid);
 
-        // 4. Insert into indexes
         for (auto &index_info : table_indexes) {
           auto key =
               tuple.KeyFromTuple(table_info_->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
