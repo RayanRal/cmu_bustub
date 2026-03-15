@@ -164,7 +164,7 @@ void WindowFunctionExecutor::Init() {
       }
     };
 
-    auto finalize_acc = [&](const Value& acc) -> Value {
+    auto finalize_acc = [&](const Value &acc) -> Value {
       if (acc.IsNull() &&
           (wf.type_ == WindowFunctionType::CountAggregate || wf.type_ == WindowFunctionType::CountStarAggregate)) {
         return ValueFactory::GetIntegerValue(0);
