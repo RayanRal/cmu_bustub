@@ -276,7 +276,23 @@ auto WritePageGuard::IsDirty() const -> bool {
  */
 void WritePageGuard::Flush() {
   BUSTUB_ENSURE(is_valid_, "tried to flush an invalid write guard");
-  // For now, do nothing. We'll implement actual flushing later.
+  if (frame_->is_dirty_) {
+    std::vector<DiskRequest> requests;
+    auto promise = disk_scheduler_->CreatePromise();
+    auto future = promise.get_future();
+
+    DiskRequest request;
+    request.is_write_ = true;
+    request.data_ = const_cast<char *>(frame_->GetData());
+    request.page_id_ = page_id_;
+    request.callback_ = std::move(promise);
+
+    requests.push_back(std::move(request));
+    disk_scheduler_->Schedule(requests);
+
+    future.get();
+    frame_->is_dirty_ = false;
+  }
 }
 
 /**

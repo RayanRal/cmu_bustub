@@ -6,30 +6,31 @@ This document summarizes the code review of the Buffer Pool Manager, ARC Replace
 
 ---
 
-### 🚨 1. Critical Performance Bottleneck: Holding `bpm_latch_` During Disk I/O
+### ✅ 1. Critical Performance Bottleneck: Holding `bpm_latch_` During Disk I/O — **[FIXED]**
 - **Location**: [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp#L250-L288) (`CheckedWritePage`) and [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp#L364-L402) (`CheckedReadPage`)
 - **Problem**: `future.get()` blocks execution while waiting for disk I/O to complete. Calling this while holding `bpm_latch_` locks the entire buffer pool manager.
-- **Impact**: Under concurrent workloads, **all other threads are completely blocked** from reading, writing, pinning, or fetching pages from memory while one thread waits for disk operations.
-- **Fix Pattern**:
-  1. Reserve the frame and update internal page metadata while holding `bpm_latch_`.
-  2. Release `bpm_latch_` (`latch.unlock()`).
-  3. Perform `future.get()` (disk I/O) without holding the latch.
-  4. Re-acquire the latch if remaining metadata needs updating.
+- **Impact**: Under concurrent workloads, all other threads were blocked from accessing in-memory pages while one thread waited for disk I/O.
+- **Fix Implemented**:
+  1. Updated metadata under `bpm_latch_` and acquired frame-level `rwlatch_`.
+  2. Released `bpm_latch_` before disk read/write `future.get()`.
+  3. Other worker threads can now access unrelated pages in parallel.
 
 ---
 
-### 🐢 2. $O(N)$ Linear Search on Every Page Eviction
+### ✅ 2. $O(N)$ Linear Search on Every Page Eviction — **[FIXED]**
 - **Location**: [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp#L240-L247) (`CheckedWritePage`) and [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp#L354-L361) (`CheckedReadPage`)
-- **Problem**: `page_table_` maps `page_id_t -> frame_id_t`. When `ArcReplacer::Evict()` selects a `frame_id`, a linear scan over `page_table_` is performed to locate which `page_id` belonged to that frame.
-- **Impact**: Degrades eviction complexity from $O(1)$ to $O(N)$ where $N$ is the buffer pool size.
-- **Fix Pattern**: Either store `page_id_` inside `FrameHeader` (or maintain a reverse mapping `frame_id -> page_id`), allowing instant $O(1)$ lookup upon eviction.
+- **Problem**: `page_table_` maps `page_id_t -> frame_id_t`. When `ArcReplacer::Evict()` selects a `frame_id`, a linear scan over `page_table_` was performed to find the evicted `page_id`.
+- **Impact**: Degraded eviction complexity from $O(1)$ to $O(N)$.
+- **Fix Implemented**:
+  1. Added `page_id_t page_id_` directly inside `FrameHeader`.
+  2. Evictions now read `frame->page_id_` in $O(1)$ time.
 
 ---
 
-### 🔒 3. Unused Mutex / Dead Lock Code in `ArcReplacer`
+### ✅ 3. Unused Mutex / Dead Lock Code in `ArcReplacer` — **[FIXED]**
 - **Location**: [`src/include/buffer/arc_replacer.h`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/include/buffer/arc_replacer.h#L87) & [`src/buffer/arc_replacer.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/arc_replacer.cpp)
-- **Problem**: `ArcReplacer` declares `std::mutex latch_;`, but **none** of the methods (`Evict`, `RecordAccess`, `SetEvictable`, `Remove`, `Size`) actually acquire `latch_`.
-- **Impact**: Currently, `ArcReplacer` relies entirely on external synchronization by `BufferPoolManager`'s `bpm_latch_`. Having an unused `latch_` member field is misleading and dead code. Either acquire `latch_` inside `ArcReplacer` to make it thread-safe independently, or remove `latch_` if thread-safety is handled externally.
+- **Problem**: `ArcReplacer` declared `std::mutex latch_;`, but none of the public methods (`Evict`, `RecordAccess`, `SetEvictable`, `Remove`, `Size`) acquired it.
+- **Fix Implemented**: Added `std::scoped_lock lock(latch_)` to all public methods in `ArcReplacer`, ensuring internal thread-safety and removing dead code.
 
 ---
 
@@ -40,9 +41,10 @@ This document summarizes the code review of the Buffer Pool Manager, ARC Replace
 
 ---
 
-### 🛠️ 5. Unimplemented Stub: `WritePageGuard::Flush()`
+### ✅ 5. Unimplemented Stub: `WritePageGuard::Flush()` — **[FIXED]**
 - **Location**: [`src/storage/page/page_guard.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/storage/page/page_guard.cpp#L277-L280)
-- **Problem**: `WritePageGuard::Flush()` is an empty stub. If any component calls `guard.Flush()`, the page will not be written to disk.
+- **Problem**: `WritePageGuard::Flush()` was an empty stub (`// For now, do nothing.`).
+- **Fix Implemented**: Implemented `WritePageGuard::Flush()` to check `frame_->is_dirty_`, schedule a write request with `disk_scheduler_`, wait for I/O completion, and reset `frame_->is_dirty_ = false`.
 
 ---
 
@@ -62,12 +64,12 @@ This document summarizes the code review of the Buffer Pool Manager, ARC Replace
 
 ## Overview Table
 
-| Issue | Severity | Category | Target File |
-| :--- | :---: | :--- | :--- |
-| **Holding `bpm_latch_` during disk I/O** | 🔴 High | Concurrency / Bottleneck | [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp) |
-| **$O(N)$ linear search on eviction** | 🟠 Medium | Algorithmic Inefficiency | [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp) |
-| **Unused `latch_` in `ArcReplacer`** | 🟡 Low | Clean Code / Mutex | [`src/include/buffer/arc_replacer.h`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/include/buffer/arc_replacer.h) |
-| **Unconditional `is_dirty_ = true` on `Drop()`** | 🟠 Medium | Correctness / I/O | [`src/storage/page/page_guard.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/storage/page/page_guard.cpp) |
-| **Empty `WritePageGuard::Flush()` stub** | 🟠 Medium | Incomplete Feature | [`src/storage/page/page_guard.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/storage/page/page_guard.cpp) |
-| **Heap allocations (`shared_ptr`) on hot path** | 🟡 Low | Memory Overhead | [`src/buffer/arc_replacer.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/arc_replacer.cpp) |
-| **Redundant 4KB zeroing on `Reset()`** | 🟡 Low | Performance | [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp) |
+| Issue | Severity | Category | Target File | Status |
+| :--- | :---: | :--- | :--- | :---: |
+| **Holding `bpm_latch_` during disk I/O** | 🔴 High | Concurrency / Bottleneck | [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp) | ✅ **Fixed** |
+| **$O(N)$ linear search on eviction** | 🟠 Medium | Algorithmic Inefficiency | [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp) | ✅ **Fixed** |
+| **Unused `latch_` in `ArcReplacer`** | 🟡 Low | Clean Code / Mutex | [`src/include/buffer/arc_replacer.h`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/include/buffer/arc_replacer.h) | ✅ **Fixed** |
+| **Unconditional `is_dirty_ = true` on `Drop()`** | 🟠 Medium | Correctness / I/O | [`src/storage/page/page_guard.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/storage/page/page_guard.cpp) | ⏳ Pending |
+| **Empty `WritePageGuard::Flush()` stub** | 🟠 Medium | Incomplete Feature | [`src/storage/page/page_guard.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/storage/page/page_guard.cpp) | ✅ **Fixed** |
+| **Heap allocations (`shared_ptr`) on hot path** | 🟡 Low | Memory Overhead | [`src/buffer/arc_replacer.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/arc_replacer.cpp) | ⏳ Pending |
+| **Redundant 4KB zeroing on `Reset()`** | 🟡 Low | Performance | [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp) | ⏳ Pending |
