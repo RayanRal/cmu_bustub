@@ -41,7 +41,6 @@ ArcReplacer::ArcReplacer(size_t num_frames) : replacer_size_(num_frames) {}
  * @return frame id of the evicted frame, or std::nullopt if cannot evict
  */
 auto ArcReplacer::Evict() -> std::optional<frame_id_t> {
-  std::scoped_lock lock(latch_);
   auto try_evict_from = [&](std::list<frame_id_t> &live_list, std::list<page_id_t> &ghost_list,
                             ArcStatus ghost_status) -> std::optional<frame_id_t> {
     for (auto it = live_list.rbegin(); it != live_list.rend(); ++it) {
