@@ -238,25 +238,7 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
   page_id_t evicted_page_id = frame->page_id_;
   bool need_flush = (evicted_page_id != INVALID_PAGE_ID && frame->is_dirty_);
 
-  // Remove evicted page from page_table_ in O(1)
-  if (evicted_page_id != INVALID_PAGE_ID) {
-    page_table_.erase(evicted_page_id);
-  }
-
-  // Register new page in page_table_ and update frame metadata
-  page_table_[page_id] = frame_id;
-  frame->page_id_ = page_id;
-  frame->pin_count_.fetch_add(1);
-  replacer_->RecordAccess(frame_id, page_id, access_type);
-  replacer_->SetEvictable(frame_id, false);
-
-  // Lock frame rwlatch while performing disk I/O so callers of page_id wait on rwlatch instead of bpm_latch_
-  frame->rwlatch_.lock();
-
-  // Release bpm_latch_ BEFORE DISK I/O!
-  latch.unlock();
-
-  // Flush evicted page if dirty
+  // If evicted page is dirty, flush it to disk first BEFORE removing from page_table_
   if (need_flush) {
     std::vector<DiskRequest> requests;
     auto promise = disk_scheduler_->CreatePromise();
@@ -274,6 +256,24 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
     future.get();
     frame->is_dirty_ = false;
   }
+
+  // Remove evicted page from page_table_ in O(1)
+  if (evicted_page_id != INVALID_PAGE_ID) {
+    page_table_.erase(evicted_page_id);
+  }
+
+  // Register new page in page_table_ and update frame metadata
+  page_table_[page_id] = frame_id;
+  frame->page_id_ = page_id;
+  frame->pin_count_.fetch_add(1);
+  replacer_->RecordAccess(frame_id, page_id, access_type);
+  replacer_->SetEvictable(frame_id, false);
+
+  // Lock frame rwlatch while performing disk read so callers of page_id wait on rwlatch instead of bpm_latch_
+  frame->rwlatch_.lock();
+
+  // Release bpm_latch_ BEFORE disk read!
+  latch.unlock();
 
   // Load new page from disk
   {
@@ -331,25 +331,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
   page_id_t evicted_page_id = frame->page_id_;
   bool need_flush = (evicted_page_id != INVALID_PAGE_ID && frame->is_dirty_);
 
-  // Remove evicted page from page_table_ in O(1)
-  if (evicted_page_id != INVALID_PAGE_ID) {
-    page_table_.erase(evicted_page_id);
-  }
-
-  // Register new page in page_table_ and update frame metadata
-  page_table_[page_id] = frame_id;
-  frame->page_id_ = page_id;
-  frame->pin_count_.fetch_add(1);
-  replacer_->RecordAccess(frame_id, page_id, access_type);
-  replacer_->SetEvictable(frame_id, false);
-
-  // Lock frame rwlatch while performing disk I/O so callers of page_id wait on rwlatch instead of bpm_latch_
-  frame->rwlatch_.lock();
-
-  // Release bpm_latch_ BEFORE DISK I/O!
-  latch.unlock();
-
-  // Flush evicted page if dirty
+  // If evicted page is dirty, flush it to disk first BEFORE removing from page_table_
   if (need_flush) {
     std::vector<DiskRequest> requests;
     auto promise = disk_scheduler_->CreatePromise();
@@ -367,6 +349,24 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
     future.get();
     frame->is_dirty_ = false;
   }
+
+  // Remove evicted page from page_table_ in O(1)
+  if (evicted_page_id != INVALID_PAGE_ID) {
+    page_table_.erase(evicted_page_id);
+  }
+
+  // Register new page in page_table_ and update frame metadata
+  page_table_[page_id] = frame_id;
+  frame->page_id_ = page_id;
+  frame->pin_count_.fetch_add(1);
+  replacer_->RecordAccess(frame_id, page_id, access_type);
+  replacer_->SetEvictable(frame_id, false);
+
+  // Lock frame rwlatch while performing disk read so callers of page_id wait on rwlatch instead of bpm_latch_
+  frame->rwlatch_.lock();
+
+  // Release bpm_latch_ BEFORE disk read!
+  latch.unlock();
 
   // Load new page from disk
   {
