@@ -11,8 +11,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "buffer/buffer_pool_manager.h"
-#include <chrono>
-#include <thread>
 #include "buffer/arc_replacer.h"
 #include "common/config.h"
 #include "common/macros.h"
@@ -221,7 +219,7 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
     // If another thread is currently flushing this pid as a dirty victim, wait for it so we
     // never read stale disk data. The victim entry was already removed from page_table_.
     if (flushing_pages_.count(page_id) != 0) {
-      flushing_cv_.wait_for(latch, std::chrono::milliseconds(1), [&] { return flushing_pages_.count(page_id) == 0; });
+      flushing_cv_.wait(latch, [&] { return flushing_pages_.count(page_id) == 0; });
       continue;
     }
 
@@ -331,7 +329,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
 
     // See CheckedWritePage: wait for in-flight flush of this pid to avoid stale reads.
     if (flushing_pages_.count(page_id) != 0) {
-      flushing_cv_.wait_for(latch, std::chrono::milliseconds(1), [&] { return flushing_pages_.count(page_id) == 0; });
+      flushing_cv_.wait(latch, [&] { return flushing_pages_.count(page_id) == 0; });
       continue;
     }
 
