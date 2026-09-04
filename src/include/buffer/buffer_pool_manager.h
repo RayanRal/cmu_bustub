@@ -12,10 +12,12 @@
 
 #pragma once
 
+#include <condition_variable>
 #include <list>
 #include <memory>
 #include <shared_mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "buffer/arc_replacer.h"
@@ -143,6 +145,19 @@ class BufferPoolManager {
 
   /** @brief A list of free frames that do not hold any page's data. */
   std::list<frame_id_t> free_frames_;
+
+  /**
+   * @brief Pages currently being flushed to disk by an evictor outside `bpm_latch_`.
+   *
+   * When a dirty victim is evicted, its `page_table_` entry is removed and the victim pid is
+   * inserted here BEFORE `bpm_latch_` is released. The flush I/O then runs without holding
+   * `bpm_latch_` (frame `rwlatch_` exclusive is held). Concurrent accessors that miss and find
+   * their pid in this set must wait on `flushing_cv_` and retry so they never read
+   * stale disk data before the flush completes. Protected by `bpm_latch_`.
+   */
+  std::unordered_set<page_id_t> flushing_pages_;
+  /** @brief Notified whenever a pid is removed from `flushing_pages_`. */
+  std::condition_variable flushing_cv_;
 
   /** @brief The replacer to find unpinned / candidate pages for eviction. */
   std::shared_ptr<ArcReplacer> replacer_;

@@ -72,4 +72,24 @@ This document summarizes the code review of the Buffer Pool Manager, ARC Replace
 | **Unconditional `is_dirty_ = true` on `Drop()`** | 🟠 Medium | Correctness / I/O | [`src/storage/page/page_guard.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/storage/page/page_guard.cpp) | ⏳ Pending |
 | **Empty `WritePageGuard::Flush()` stub** | 🟠 Medium | Incomplete Feature | [`src/storage/page/page_guard.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/storage/page/page_guard.cpp) | ✅ **Fixed** |
 | **Heap allocations (`shared_ptr`) on hot path** | 🟡 Low | Memory Overhead | [`src/buffer/arc_replacer.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/arc_replacer.cpp) | ⏳ Pending |
-| **Redundant 4KB zeroing on `Reset()`** | 🟡 Low | Performance | [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp) | ⏳ Pending |
+| **Redundant 4KB zeroing on `Reset()`** | 🟡 Low | Performance | [`src/buffer/buffer_pool_manager.cpp`](file:///Users/leonidchashnikov/Projects/cmu_bustub/src/buffer/buffer_pool_manager.cpp) | ✅ **Fixed as side-effect** (hot path no longer calls `Reset()`) |
+
+---
+
+## `bustub-bpm-bench` numbers (flush moved outside `bpm_latch_`)
+
+Command: `./bin/bustub-bpm-bench --duration 8000 --bpm-size 64 --db-size 6400 --scan-thread-n 8 --get-thread-n 8 [--latency 1]`
+Branch `fix/bpm-latch-concurrency`, 3 runs per config. Scan = sequential `ReadPage`, Get = Zipfian `WritePage` (dirty).
+
+**Before** = read outside latch, dirty flush **inside** latch. **After** = both flush + read outside latch
+(`flushing_pages_` + `flushing_cv_` for stale-read protection, early `page_table_` publish + frame `rwlatch_` for sharing).
+
+| Config | Before scan/s | After scan/s | Δ scan | Before get/s | After get/s | Δ get | Total Δ |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| no latency | ~22270 (22121/22229/22422) | ~29850 (29780/29783/30161) | **+34%** | ~24300 (24162/24311/24437) | ~27280 (27162/27320/27397) | **+12%** | **+23%** (46570 → 57130) |
+| latency=1 | ~283 (282/283) | ~317 (299/316/335) | **+12%** | ~324 (317/331) | ~286 (275/285/298) | -12% | ~flat (607 → 603) |
+
+Notes:
+- No-latency (memory disk): latch hold time dominates; moving 4KB flush outside latch is a clear win on both scan and get.
+- With simulated disk latency: scan (eviction-heavy) still wins; get dips because faster scans create more concurrent flush I/O pressure on the shared `DiskScheduler` and shift scheduling toward scans. Total system throughput is flat; scan tail latency improves.
+- Correctness: `buffer_pool_manager_test` (7/7 incl. `ContentionTest`, `DeadlockTest`), `page_guard_test` (2/2), `arc_replacer_test` (2/2) pass.
