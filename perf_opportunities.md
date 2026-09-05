@@ -12,7 +12,7 @@ and `__mock_t7` = 1M rows, `__mock_t11` = 1M rows, `__mock_t10` = 10K rows, `__m
 | q1-window (`rank()` over 10M rows) | ~161s → **~110s** (scan-only baseline 58s; sort phase ~103s → ~52s) | TopN(10) → Filter(rank≤3) → Window → MockScan | Improved 2026-09-06: Schwartzian done; now scan-bound — next step is per-partition TopN pushdown (item 5) |
 | q2 (LEFT JOIN + 32-col agg) | ~67s → **~34s** (join-only 42s → 9s, of which 6.5s is the inherent left scan) | Agg → NLJ-Left (`v < v4`) → t7 × Filter(`1=2`) → t8 | Fixed 2026-09-05: NLJ empty-side fast path; remainder is agg work |
 | q1 (3-way join + agg) | ~49s | Filter → HJ → HJ (+ pushed Filters) | Fixed; residual hash/agg cost |
-| q1-index (10-row lookup) | ~11s | SeqScan + Filter over 1M rows (index exists, unused) | Missing index rewrite |
+| q1-index (10-row lookup) | ~11s → **~3.8s** | IndexScan range `col0:[90,+inf] col1:[10,10]` over `t1xy` | Fixed 2026-09-06: AND-prefix range rewrite; all 1M rows have x≥90 so the full key range is visited — remaining cost is per-entry heap fetch + filter |
 | q3 (plain 2-way join) | ~11s | Clean HJ, 10K × 1M | Healthy baseline, no action |
 
 ## 1. Window sort with interpreted comparator (q1-window, ~161s)
@@ -67,6 +67,18 @@ Fix: extend the rule to match an AND of point/range prefix conjuncts on a compos
 columns, add bound support to `IndexScanPlanNode`, implement B+Tree range iteration in the executor.
 Expected impact: 11s → milliseconds (10 output rows) — the highest ratio win on the board.
 Complexity: medium-high (the executor's MVCC/visibility path must handle range iteration correctly).
+Status (2026-09-06, DONE on `opt/nlj-hashjoin-residual`): `IndexScanPlanNode.range_bounds_` +
+AND-prefix matcher in `seqscan_as_indexscan.cpp` (B+Tree only, leading run of =, ≥, >, ≤, < on col-vs-const;
+legacy OR path untouched) + seek-via-`Begin(low_key)` with high-key early termination in
+`index_scan_executor.cpp`, reusing the existing MVCC fetch+filter loop unchanged. Measured: q1-index
+11.1s → 3.8s with correct 10 rows. Correction to the original estimate: ms is unreachable here — all 1M
+rows satisfy x≥90, so the full key range is visited and each entry pays a heap fetch + residual filter;
+the win comes from ordered index traversal beating the heap scan per row. Verified: targeted
+range/eq/non-leading semantics tests, all join/window SLTs, txn_index/scan/executor suites, full
+non-leaderboard sweep (only the 6 known pre-existing failures).
+Follow-up (possible, needs care): key-column pre-filter before the heap fetch (skip entries whose key
+already violates a bound) — would cut most of the remaining 3.8s, but must be weighed against MVCC
+snapshot semantics since index keys track the latest version while readers may see older ones.
 
 ## 4. Hash-table hygiene, cross-cutting (q1/q2/q3, minor)
 

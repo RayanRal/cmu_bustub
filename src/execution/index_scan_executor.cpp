@@ -40,6 +40,7 @@ void IndexScanExecutor::Init() {
     txn->AppendScanPredicate(plan_->table_oid_, plan_->filter_predicate_);
   }
   is_point_lookup_ = !plan_->pred_keys_.empty();
+  is_range_scan_ = !is_point_lookup_ && !plan_->range_bounds_.empty();
   if (is_point_lookup_) {
     rids_.clear();
     rid_idx_ = 0;
@@ -48,6 +49,34 @@ void IndexScanExecutor::Init() {
       Tuple key_tuple({val}, index_info_->index_->GetKeySchema());
       tree_->ScanKey(key_tuple, &rids_, exec_ctx_->GetTransaction());
     }
+  } else if (is_range_scan_) {
+    // Build inclusive seek/termination keys: unbounded sides use the column type's min/max value, and exclusive
+    // endpoints are treated as inclusive (a safe superset — the filter predicate rejects the rest per tuple).
+    Schema *key_schema = index_info_->index_->GetKeySchema();
+    std::vector<Value> low_vals;
+    std::vector<Value> high_vals;
+    low_vals.reserve(key_schema->GetColumnCount());
+    high_vals.reserve(key_schema->GetColumnCount());
+    for (uint32_t i = 0; i < key_schema->GetColumnCount(); ++i) {
+      TypeId col_type = key_schema->GetColumn(i).GetType();
+      if (i < plan_->range_bounds_.size() && plan_->range_bounds_[i].has_low_) {
+        low_vals.push_back(plan_->range_bounds_[i].low_);
+      } else {
+        low_vals.push_back(Type::GetMinValue(col_type));
+      }
+      if (i < plan_->range_bounds_.size() && plan_->range_bounds_[i].has_high_) {
+        high_vals.push_back(plan_->range_bounds_[i].high_);
+      } else {
+        high_vals.push_back(Type::GetMaxValue(col_type));
+      }
+    }
+    Tuple low_tuple(low_vals, key_schema);
+    IntegerKeyType_BTree low_key;
+    low_key.SetFromKey(low_tuple);
+    Tuple high_tuple(high_vals, key_schema);
+    high_key_.SetFromKey(high_tuple);
+    comparator_.emplace(key_schema);
+    iter_ = std::make_unique<BPlusTreeIndexIteratorForTwoIntegerColumn>(tree_->GetBeginIterator(low_key));
   } else {
     iter_ = std::make_unique<BPlusTreeIndexIteratorForTwoIntegerColumn>(tree_->GetBeginIterator());
   }
@@ -68,7 +97,11 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
       }
     } else {
       if (iter_ && !iter_->IsEnd()) {
-        rid = (*(*iter_)).second;
+        auto entry = (*(*iter_));
+        if (is_range_scan_ && (*comparator_)(entry.first, high_key_) > 0) {
+          break;
+        }
+        rid = entry.second;
         ++(*iter_);
       } else {
         break;
