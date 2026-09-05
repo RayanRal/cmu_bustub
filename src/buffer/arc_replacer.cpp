@@ -104,6 +104,7 @@ auto ArcReplacer::Evict() -> std::optional<frame_id_t> {
  */
 void ArcReplacer::RecordAccess(const frame_id_t frame_id, const page_id_t page_id,
                                [[maybe_unused]] AccessType access_type) {
+  std::scoped_lock lock(latch_);
   if (const auto it = alive_map_.find(frame_id); it != alive_map_.end()) {
     HandleCacheHit(frame_id);
     return;
@@ -139,6 +140,7 @@ void ArcReplacer::RecordAccess(const frame_id_t frame_id, const page_id_t page_i
  * @param set_evictable whether the given frame is evictable or not
  */
 void ArcReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
+  std::scoped_lock lock(latch_);
   auto it = alive_map_.find(frame_id);
   if (it == alive_map_.end()) {
     throw std::runtime_error("Invalid frame id");
@@ -172,6 +174,7 @@ void ArcReplacer::SetEvictable(frame_id_t frame_id, bool set_evictable) {
  * @param frame_id id of frame to be removed
  */
 void ArcReplacer::Remove(frame_id_t frame_id) {
+  std::scoped_lock lock(latch_);
   auto it = alive_map_.find(frame_id);
   if (it == alive_map_.end()) {
     return;
@@ -197,7 +200,10 @@ void ArcReplacer::Remove(frame_id_t frame_id) {
  *
  * @return size_t
  */
-auto ArcReplacer::Size() -> size_t { return curr_size_; }
+auto ArcReplacer::Size() -> size_t {
+  std::scoped_lock lock(latch_);
+  return curr_size_;
+}
 
 void ArcReplacer::HandleCacheHit(const frame_id_t frame_id) {
   const auto frame_status = alive_map_[frame_id];

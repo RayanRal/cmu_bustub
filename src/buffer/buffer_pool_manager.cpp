@@ -47,6 +47,7 @@ void FrameHeader::Reset() {
   std::fill(data_.begin(), data_.end(), 0);
   pin_count_.store(0);
   is_dirty_ = false;
+  page_id_ = INVALID_PAGE_ID;
 }
 
 /**
@@ -137,6 +138,12 @@ auto BufferPoolManager::NewPage() -> page_id_t { return next_page_id_.fetch_add(
 auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   std::scoped_lock latch(*bpm_latch_);
 
+  // A page currently being flushed by an evictor is logically still on disk transit:
+  // do not deallocate underneath the in-flight write.
+  if (flushing_pages_.count(page_id) != 0) {
+    return false;
+  }
+
   auto page_it = page_table_.find(page_id);
   if (page_it == page_table_.end()) {
     // Page not in buffer pool, but deallocate from disk
@@ -206,209 +213,221 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
  * returns `std::nullopt`; otherwise, returns a `WritePageGuard` ensuring exclusive and mutable access to a page's data.
  */
 auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_type) -> std::optional<WritePageGuard> {
-  std::unique_lock latch(*bpm_latch_);
+  while (true) {
+    std::unique_lock latch(*bpm_latch_);
 
-  // Case 1: Page is already in buffer pool
-  auto page_it = page_table_.find(page_id);
-  if (page_it != page_table_.end()) {
-    frame_id_t frame_id = page_it->second;
+    // If another thread is currently flushing this pid as a dirty victim, wait for it so we
+    // never read stale disk data. The victim entry was already removed from page_table_.
+    if (flushing_pages_.count(page_id) != 0) {
+      flushing_cv_.wait(latch, [&] { return flushing_pages_.count(page_id) == 0; });
+      continue;
+    }
+
+    // Case 1: Page is already in buffer pool
+    auto page_it = page_table_.find(page_id);
+    if (page_it != page_table_.end()) {
+      frame_id_t frame_id = page_it->second;
+      auto frame = frames_[frame_id];
+      frame->pin_count_.fetch_add(1);
+      replacer_->RecordAccess(frame_id, page_id, access_type);
+      replacer_->SetEvictable(frame_id, false);
+      latch.unlock();
+      return WritePageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
+    }
+
+    // Case 2: Acquire a free frame or evict an existing frame
+    frame_id_t frame_id;
+    if (!free_frames_.empty()) {
+      frame_id = free_frames_.front();
+      free_frames_.pop_front();
+    } else {
+      auto evict_frame_id = replacer_->Evict();
+      if (!evict_frame_id.has_value()) {
+        return std::nullopt;  // Out of memory
+      }
+      frame_id = evict_frame_id.value();
+    }
+
     auto frame = frames_[frame_id];
+    page_id_t victim_page_id = frame->page_id_;
+    bool need_flush = (victim_page_id != INVALID_PAGE_ID && frame->is_dirty_);
+
+    // Reserve the frame so no other evictor picks it (Evict already removed it from replacer).
     frame->pin_count_.fetch_add(1);
+
+    // Remove victim mapping in O(1) and publish new mapping BEFORE releasing bpm_latch_ so
+    // concurrent accessors for page_id share this frame and block on frame rwlatch instead.
+    if (victim_page_id != INVALID_PAGE_ID) {
+      page_table_.erase(victim_page_id);
+    }
+    if (need_flush) {
+      flushing_pages_.insert(victim_page_id);
+    }
+    page_table_[page_id] = frame_id;
+    frame->page_id_ = page_id;
     replacer_->RecordAccess(frame_id, page_id, access_type);
     replacer_->SetEvictable(frame_id, false);
+
+    // Lock frame exclusive while performing I/O so waiters for page_id block on rwlatch.
+    frame->rwlatch_.lock();
     latch.unlock();
+
+    // Flush dirty victim OUTSIDE bpm_latch_. Frame still holds victim bytes; use saved victim id.
+    if (need_flush) {
+      std::vector<DiskRequest> requests;
+      auto promise = disk_scheduler_->CreatePromise();
+      auto future = promise.get_future();
+
+      DiskRequest request;
+      request.is_write_ = true;
+      request.data_ = const_cast<char *>(frame->GetData());
+      request.page_id_ = victim_page_id;
+      request.callback_ = std::move(promise);
+
+      requests.push_back(std::move(request));
+      disk_scheduler_->Schedule(requests);
+
+      future.get();
+      frame->is_dirty_ = false;
+
+      // Unblock future reloaders of the victim; they can now proceed in parallel with our read.
+      {
+        std::scoped_lock evict_latch(*bpm_latch_);
+        flushing_pages_.erase(victim_page_id);
+      }
+      flushing_cv_.notify_all();
+    }
+
+    // Load new page from disk OUTSIDE bpm_latch_.
+    {
+      std::vector<DiskRequest> requests;
+      auto promise = disk_scheduler_->CreatePromise();
+      auto future = promise.get_future();
+
+      DiskRequest request;
+      request.is_write_ = false;
+      request.data_ = frame->GetDataMut();
+      request.page_id_ = page_id;
+      request.callback_ = std::move(promise);
+
+      requests.push_back(std::move(request));
+      disk_scheduler_->Schedule(requests);
+
+      future.get();
+    }
+
+    // Unlock frame rwlatch (WritePageGuard constructor will lock it)
+    frame->rwlatch_.unlock();
+
     return WritePageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
   }
-
-  // Case 2: There are free frames available
-  frame_id_t frame_id;
-  if (!free_frames_.empty()) {
-    frame_id = free_frames_.front();
-    free_frames_.pop_front();
-  } else {
-    // Case 3: Need to evict a page
-    auto evict_frame_id = replacer_->Evict();
-    if (!evict_frame_id.has_value()) {
-      return std::nullopt;  // Out of memory
-    }
-    frame_id = evict_frame_id.value();
-
-    // Flush and remove the evicted page from page table
-    auto evicted_frame = frames_[frame_id];
-
-    // Find the page ID for this frame and flush if dirty
-    page_id_t evicted_page_id = INVALID_PAGE_ID;
-    for (auto it = page_table_.begin(); it != page_table_.end(); ++it) {
-      if (it->second == frame_id) {
-        evicted_page_id = it->first;
-        page_table_.erase(it);
-        break;
-      }
-    }
-
-    // Flush the page if it's dirty before reusing the frame
-    if (evicted_page_id != INVALID_PAGE_ID && evicted_frame->is_dirty_) {
-      std::vector<DiskRequest> requests;
-      auto promise = disk_scheduler_->CreatePromise();
-      auto future = promise.get_future();
-
-      DiskRequest request;
-      request.is_write_ = true;
-      request.data_ = const_cast<char *>(evicted_frame->GetData());
-      request.page_id_ = evicted_page_id;
-      request.callback_ = std::move(promise);
-
-      requests.push_back(std::move(request));
-      disk_scheduler_->Schedule(requests);
-
-      // Wait for the write to complete
-      future.get();
-    }
-  }
-
-  // Load the page into the frame
-  auto frame = frames_[frame_id];
-  frame->Reset();
-
-  // Schedule a disk read to load the page
-  std::vector<DiskRequest> requests;
-  auto promise = disk_scheduler_->CreatePromise();
-  auto future = promise.get_future();
-
-  DiskRequest request;
-  request.is_write_ = false;
-  request.data_ = frame->GetDataMut();
-  request.page_id_ = page_id;
-  request.callback_ = std::move(promise);
-
-  requests.push_back(std::move(request));
-  disk_scheduler_->Schedule(requests);
-
-  // Wait for the read to complete
-  future.get();
-
-  // Add to page table first
-  page_table_[page_id] = frame_id;
-  frame->pin_count_.fetch_add(1);
-  replacer_->RecordAccess(frame_id, page_id, access_type);
-  replacer_->SetEvictable(frame_id, false);
-
-  latch.unlock();
-  return WritePageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
 }
 
-/**
- * @brief Acquires an optional read-locked guard over a page of data. The user can specify an `AccessType` if needed.
- *
- * If it is not possible to bring the page of data into memory, this function will return a `std::nullopt`.
- *
- * Page data can _only_ be accessed via page guards. Users of this `BufferPoolManager` are expected to acquire either a
- * `ReadPageGuard` or a `WritePageGuard` depending on the mode in which they would like to access the data, which
- * ensures that any access of data is thread-safe.
- *
- * There can be any number of `ReadPageGuard`s reading the same page of data at a time across different threads.
- * However, all data access must be immutable. If a user wants to mutate the page's data, they must acquire a
- * `WritePageGuard` with `CheckedWritePage` instead.
- *
- * ### Implementation
- *
- * See the implementation details of `CheckedWritePage`.
- *
- * @param page_id The ID of the page we want to read.
- * @param access_type The type of page access.
- * @return std::optional<ReadPageGuard> An optional latch guard where if there are no more free frames (out of memory)
- * returns `std::nullopt`; otherwise, returns a `ReadPageGuard` ensuring shared and read-only access to a page's data.
- */
 auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_type) -> std::optional<ReadPageGuard> {
-  std::unique_lock latch(*bpm_latch_);
+  while (true) {
+    std::unique_lock latch(*bpm_latch_);
 
-  // Case 1: Page is already in buffer pool
-  auto page_it = page_table_.find(page_id);
-  if (page_it != page_table_.end()) {
-    frame_id_t frame_id = page_it->second;
+    // See CheckedWritePage: wait for in-flight flush of this pid to avoid stale reads.
+    if (flushing_pages_.count(page_id) != 0) {
+      flushing_cv_.wait(latch, [&] { return flushing_pages_.count(page_id) == 0; });
+      continue;
+    }
+
+    // Case 1: Page is already in buffer pool
+    auto page_it = page_table_.find(page_id);
+    if (page_it != page_table_.end()) {
+      frame_id_t frame_id = page_it->second;
+      auto frame = frames_[frame_id];
+      frame->pin_count_.fetch_add(1);
+      replacer_->RecordAccess(frame_id, page_id, access_type);
+      replacer_->SetEvictable(frame_id, false);
+      latch.unlock();
+      return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
+    }
+
+    // Case 2: Acquire a free frame or evict an existing frame
+    frame_id_t frame_id;
+    if (!free_frames_.empty()) {
+      frame_id = free_frames_.front();
+      free_frames_.pop_front();
+    } else {
+      auto evict_frame_id = replacer_->Evict();
+      if (!evict_frame_id.has_value()) {
+        return std::nullopt;  // Out of memory
+      }
+      frame_id = evict_frame_id.value();
+    }
+
     auto frame = frames_[frame_id];
+    page_id_t victim_page_id = frame->page_id_;
+    bool need_flush = (victim_page_id != INVALID_PAGE_ID && frame->is_dirty_);
+
+    // Reserve the frame so no other evictor picks it.
     frame->pin_count_.fetch_add(1);
+
+    if (victim_page_id != INVALID_PAGE_ID) {
+      page_table_.erase(victim_page_id);
+    }
+    if (need_flush) {
+      flushing_pages_.insert(victim_page_id);
+    }
+    page_table_[page_id] = frame_id;
+    frame->page_id_ = page_id;
     replacer_->RecordAccess(frame_id, page_id, access_type);
     replacer_->SetEvictable(frame_id, false);
+
+    // Lock frame rwlatch while performing I/O so waiters for page_id block on rwlatch.
+    frame->rwlatch_.lock();
     latch.unlock();
-    return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
-  }
 
-  // Case 2: There are free frames available
-  frame_id_t frame_id;
-  if (!free_frames_.empty()) {
-    frame_id = free_frames_.front();
-    free_frames_.pop_front();
-  } else {
-    // Case 3: Need to evict a page
-    auto evict_frame_id = replacer_->Evict();
-    if (!evict_frame_id.has_value()) {
-      return std::nullopt;  // Out of memory
-    }
-    frame_id = evict_frame_id.value();
-
-    // Flush and remove the evicted page from page table
-    auto evicted_frame = frames_[frame_id];
-
-    // Find the page ID for this frame and flush if dirty
-    page_id_t evicted_page_id = INVALID_PAGE_ID;
-    for (auto it = page_table_.begin(); it != page_table_.end(); ++it) {
-      if (it->second == frame_id) {
-        evicted_page_id = it->first;
-        page_table_.erase(it);
-        break;
-      }
-    }
-
-    // Flush the page if it's dirty before reusing the frame
-    if (evicted_page_id != INVALID_PAGE_ID && evicted_frame->is_dirty_) {
+    // Flush dirty victim OUTSIDE bpm_latch_.
+    if (need_flush) {
       std::vector<DiskRequest> requests;
       auto promise = disk_scheduler_->CreatePromise();
       auto future = promise.get_future();
 
       DiskRequest request;
       request.is_write_ = true;
-      request.data_ = const_cast<char *>(evicted_frame->GetData());
-      request.page_id_ = evicted_page_id;
+      request.data_ = const_cast<char *>(frame->GetData());
+      request.page_id_ = victim_page_id;
       request.callback_ = std::move(promise);
 
       requests.push_back(std::move(request));
       disk_scheduler_->Schedule(requests);
 
-      // Wait for the write to complete
+      future.get();
+      frame->is_dirty_ = false;
+
+      {
+        std::scoped_lock evict_latch(*bpm_latch_);
+        flushing_pages_.erase(victim_page_id);
+      }
+      flushing_cv_.notify_all();
+    }
+
+    // Load new page from disk OUTSIDE bpm_latch_.
+    {
+      std::vector<DiskRequest> requests;
+      auto promise = disk_scheduler_->CreatePromise();
+      auto future = promise.get_future();
+
+      DiskRequest request;
+      request.is_write_ = false;
+      request.data_ = frame->GetDataMut();
+      request.page_id_ = page_id;
+      request.callback_ = std::move(promise);
+
+      requests.push_back(std::move(request));
+      disk_scheduler_->Schedule(requests);
+
       future.get();
     }
+
+    // Unlock frame rwlatch (ReadPageGuard constructor will lock it)
+    frame->rwlatch_.unlock();
+
+    return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
   }
-
-  // Load the page into the frame
-  auto frame = frames_[frame_id];
-  frame->Reset();
-
-  // Schedule a disk read to load the page
-  std::vector<DiskRequest> requests;
-  auto promise = disk_scheduler_->CreatePromise();
-  auto future = promise.get_future();
-
-  DiskRequest request;
-  request.is_write_ = false;
-  request.data_ = frame->GetDataMut();
-  request.page_id_ = page_id;
-  request.callback_ = std::move(promise);
-
-  requests.push_back(std::move(request));
-  disk_scheduler_->Schedule(requests);
-
-  // Wait for the read to complete
-  future.get();
-
-  // Add to page table
-  page_table_[page_id] = frame_id;
-  frame->pin_count_.fetch_add(1);
-  replacer_->RecordAccess(frame_id, page_id, access_type);
-  replacer_->SetEvictable(frame_id, false);
-
-  latch.unlock();
-  return ReadPageGuard(page_id, frame, replacer_, bpm_latch_, disk_scheduler_);
 }
 
 /**
@@ -434,14 +453,7 @@ auto BufferPoolManager::WritePage(page_id_t page_id, AccessType access_type) -> 
     std::cerr << "Frame State:" << std::endl;
     for (size_t i = 0; i < num_frames_; ++i) {
       auto frame = frames_[i];
-      page_id_t pid = INVALID_PAGE_ID;
-      // Find page id
-      for (const auto &pair : page_table_) {
-        if (pair.second == static_cast<frame_id_t>(i)) {
-          pid = pair.first;
-          break;
-        }
-      }
+      page_id_t pid = frame->page_id_;
       std::cerr << "Frame " << i << ": Page " << pid << ", Pin " << frame->pin_count_.load() << ", Dirty "
                 << frame->is_dirty_ << std::endl;
     }
@@ -541,6 +553,11 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
   std::shared_ptr<FrameHeader> frame;
   {
     std::scoped_lock latch(*bpm_latch_);
+    if (flushing_pages_.count(page_id) != 0) {
+      // In-flight evictor flush owns this pid; caller can treat as not-cached to avoid
+      // double-write races. The evictor will complete the write.
+      return false;
+    }
     auto it = page_table_.find(page_id);
     if (it == page_table_.end()) {
       return false;
