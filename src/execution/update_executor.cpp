@@ -105,6 +105,7 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
   // Phase 1: Apply all in-place updates and the "Delete" part of PK updates
   for (auto &update : updates) {
     if (!update.pk_changed_) {
+      UpdateSecondaryIndexEntries(txn, table_info_, table_indexes, update.old_tuple_, update.new_tuple_, update.rid_);
       ModifyTuple(txn, txn_mgr, table_info_, update.rid_, update.new_tuple_, false);
     } else {
       ModifyTuple(txn, txn_mgr, table_info_, update.rid_, Tuple{}, true);
@@ -140,6 +141,9 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       }
 
       if (found_deleted_slot) {
+        auto [reuse_meta, reuse_tuple, reuse_link] =
+            GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), new_rid);
+        UpdateSecondaryIndexEntries(txn, table_info_, table_indexes, reuse_tuple, update.new_tuple_, new_rid);
         ModifyTuple(txn, txn_mgr, table_info_, new_rid, update.new_tuple_, false);
       } else {
         std::optional<RID> opt_new_rid =

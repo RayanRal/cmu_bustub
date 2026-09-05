@@ -91,6 +91,9 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       }
 
       if (found_deleted_slot) {
+        // Heal secondary indexes: the reused slot still carries the old key images.
+        auto [old_meta, old_tuple, old_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), rid);
+        UpdateSecondaryIndexEntries(txn, table_info_, table_indexes, old_tuple, tuple, rid);
         ModifyTuple(txn, txn_mgr, table_info_, rid, tuple, false);
       } else {
         std::optional<RID> new_rid =

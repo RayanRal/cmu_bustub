@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,6 +66,18 @@ auto GetUndoLogSchema(const Schema *base_schema, const std::vector<bool> &modifi
 
 void ModifyTuple(Transaction *txn, TransactionManager *txn_mgr, const TableInfo *table_info, RID rid,
                  const Tuple &new_tuple, bool is_delete);
+
+/**
+ * @brief Heals secondary-index entries when a tuple is rewritten at the same RID.
+ *
+ * Used by the in-place update path and the deleted-slot reuse paths (insert / update). The primary
+ * key entry is intentionally left alone: the reusing PK scan already resolved it (or it is unchanged),
+ * and touching it would duplicate (key, rid) pairs. Deletes never remove index entries in this
+ * codebase, so only the secondary-key image delta needs healing.
+ */
+void UpdateSecondaryIndexEntries(Transaction *txn, const TableInfo *table_info,
+                                 const std::vector<std::shared_ptr<IndexInfo>> &indexes, const Tuple &old_tuple,
+                                 const Tuple &new_tuple, RID rid);
 
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
                TableHeap *table_heap);

@@ -354,6 +354,24 @@ void ModifyTuple(Transaction *txn, TransactionManager *txn_mgr, const TableInfo 
   txn->AppendWriteSet(table_info->oid_, rid);
 }
 
+void UpdateSecondaryIndexEntries(Transaction *txn, const TableInfo *table_info,
+                                 const std::vector<std::shared_ptr<IndexInfo>> &indexes, const Tuple &old_tuple,
+                                 const Tuple &new_tuple, RID rid) {
+  for (const auto &index_info : indexes) {
+    if (index_info->is_primary_key_) {
+      continue;
+    }
+    auto old_key =
+        old_tuple.KeyFromTuple(table_info->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+    auto new_key =
+        new_tuple.KeyFromTuple(table_info->schema_, index_info->key_schema_, index_info->index_->GetKeyAttrs());
+    if (!IsTupleContentEqual(old_key, new_key)) {
+      index_info->index_->DeleteEntry(old_key, rid, txn);
+      index_info->index_->InsertEntry(new_key, rid, txn);
+    }
+  }
+}
+
 void TxnMgrDbg(const std::string &info, TransactionManager *txn_mgr, const TableInfo *table_info,
                TableHeap *table_heap) {
   fmt::println(stderr, "debug_hook: {}", info);
