@@ -99,6 +99,9 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
     values.push_back(base_tuple.GetValue(schema, i));
   }
 
+  // Partial-schema cache keyed by modified-column set (see below).
+  std::vector<std::pair<std::vector<uint32_t>, Schema>> schema_cache;
+
   for (const auto &log : undo_logs) {
     is_deleted = log.is_deleted_;
     if (log.is_deleted_) {
@@ -113,9 +116,21 @@ auto ReconstructTuple(const Schema *schema, const Tuple &base_tuple, const Tuple
     }
 
     if (!modified_cols.empty()) {
-      Schema partial_schema = Schema::CopySchema(schema, modified_cols);
+      // Long chains often repeat the same column image; reuse the partial schema instead of
+      // reallocating per log. The reference is consumed immediately, so cache growth is safe.
+      const Schema *partial_schema = nullptr;
+      for (const auto &[cols, cached] : schema_cache) {
+        if (cols == modified_cols) {
+          partial_schema = &cached;
+          break;
+        }
+      }
+      if (partial_schema == nullptr) {
+        schema_cache.emplace_back(modified_cols, Schema::CopySchema(schema, modified_cols));
+        partial_schema = &schema_cache.back().second;
+      }
       for (uint32_t i = 0; i < modified_cols.size(); ++i) {
-        values[modified_cols[i]] = log.tuple_.GetValue(&partial_schema, i);
+        values[modified_cols[i]] = log.tuple_.GetValue(partial_schema, i);
       }
     }
   }
@@ -147,14 +162,15 @@ auto CollectUndoLogs(RID rid, const TupleMeta &base_meta, const Tuple &base_tupl
   }
 
   std::vector<UndoLog> logs;
+  logs.reserve(4);
   std::optional<UndoLink> current_link = undo_link;
   while (current_link.has_value() && current_link->IsValid()) {
-    UndoLog log = txn_mgr->GetUndoLog(*current_link);
-    logs.push_back(log);
-    if (log.ts_ <= read_ts) {
+    // Single move per log (GetUndoLog returns by value); no extra copy.
+    logs.push_back(txn_mgr->GetUndoLog(*current_link));
+    if (logs.back().ts_ <= read_ts) {
       return std::make_optional(std::move(logs));
     }
-    current_link = log.prev_version_;
+    current_link = logs.back().prev_version_;
   }
 
   return std::nullopt;

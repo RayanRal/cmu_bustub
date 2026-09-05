@@ -35,7 +35,7 @@ void DeleteExecutor::Init() {
 
   std::vector<Tuple> child_tuples;
   std::vector<RID> child_rids;
-  while (child_executor_->Next(&child_tuples, &child_rids, 10)) {
+  while (child_executor_->Next(&child_tuples, &child_rids, BUSTUB_BATCH_SIZE)) {
     child_rids_.insert(child_rids_.end(), child_rids.begin(), child_rids.end());
     child_tuples.clear();
     child_rids.clear();

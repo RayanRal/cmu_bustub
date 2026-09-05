@@ -35,7 +35,7 @@ void UpdateExecutor::Init() {
 
   std::vector<Tuple> child_tuples;
   std::vector<RID> child_rids;
-  while (child_executor_->Next(&child_tuples, &child_rids, 10)) {
+  while (child_executor_->Next(&child_tuples, &child_rids, BUSTUB_BATCH_SIZE)) {
     child_rids_.insert(child_rids_.end(), child_rids.begin(), child_rids.end());
     child_tuples.clear();
     child_rids.clear();
@@ -141,8 +141,7 @@ auto UpdateExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
       }
 
       if (found_deleted_slot) {
-        auto [reuse_meta, reuse_tuple, reuse_link] =
-            GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), new_rid);
+        auto [reuse_meta, reuse_tuple, reuse_link] = GetTupleAndUndoLink(txn_mgr, table_info_->table_.get(), new_rid);
         UpdateSecondaryIndexEntries(txn, table_info_, table_indexes, reuse_tuple, update.new_tuple_, new_rid);
         ModifyTuple(txn, txn_mgr, table_info_, new_rid, update.new_tuple_, false);
       } else {

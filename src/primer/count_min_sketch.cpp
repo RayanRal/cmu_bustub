@@ -128,13 +128,15 @@ auto CountMinSketch<KeyType>::TopK(uint16_t k, const std::vector<KeyType> &candi
     result.emplace_back(candidate, Count(candidate));
   }
 
-  // Sort by count in descending order
-  std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
-
-  // Return top k (or all if fewer than k)
+  // Partial selection: O(N) partition + O(k log k) final sort instead of O(N log N).
   if (result.size() > k) {
+    std::nth_element(result.begin(), result.begin() + k, result.end(),
+                     [](const auto &a, const auto &b) { return a.second > b.second; });
     result.resize(k);
   }
+
+  // Sort by count in descending order
+  std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
 
   return result;
 }
