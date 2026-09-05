@@ -10,7 +10,7 @@ and `__mock_t7` = 1M rows, `__mock_t11` = 1M rows, `__mock_t10` = 10K rows, `__m
 | Query | Debug single pass | Plan shape | Verdict |
 |---|---|---|---|
 | q1-window (`rank()` over 10M rows) | ~161s | TopN(10) → Filter(rank≤3) → Window → MockScan | Slowest; window sort dominates |
-| q2 (LEFT JOIN + 32-col agg) | ~67s | Agg → NLJ-Left (`v < v4`) → t7 × Filter(`1=2`) → t8 | ~42s NLJ, ~25s agg (split measured) |
+| q2 (LEFT JOIN + 32-col agg) | ~67s → **~34s** (join-only 42s → 9s, of which 6.5s is the inherent left scan) | Agg → NLJ-Left (`v < v4`) → t7 × Filter(`1=2`) → t8 | Fixed 2026-09-05: NLJ empty-side fast path; remainder is agg work |
 | q1 (3-way join + agg) | ~49s | Filter → HJ → HJ (+ pushed Filters) | Fixed; residual hash/agg cost |
 | q1-index (10-row lookup) | ~11s | SeqScan + Filter over 1M rows (index exists, unused) | Missing index rewrite |
 | q3 (plain 2-way join) | ~11s | Clean HJ, 10K × 1M | Healthy baseline, no action |
@@ -41,6 +41,11 @@ tuple's full right scan yields zero tuples, latch `right_empty_` and skip `Init`
 remaining left rows (LEFT: emit padded directly; INNER: emit nothing). Expected impact: deletes most
 of the 42s. Risk: minimal (empty rescan is empty under deterministic executors, which the code already
 assumes). Complexity: low.
+Status (2026-09-05, DONE on `opt/nlj-hashjoin-residual`): implemented in
+`src/execution/nested_loop_join_executor.cpp` + header (`right_empty_` / `saw_right_tuple_`).
+Measured: join-only 41951ms → 9405ms, full q2 ~67s → 33.5s. Remaining join time is the inherent
+1M-row left scan (6.5s scan-only baseline) plus padded-row construction. All join SLTs green;
+full non-leaderboard sweep shows only the 6 known pre-existing failures.
 Follow-up (medium, optimizer): contradiction + empty-propagation rules — `Filter(false)` → empty
 relation, empty right + LEFT join → left passthrough (with NULL padding to preserve schema), empty
 either side + INNER → empty. More general, but the dynamic fix captures q2's value far more cheaply.

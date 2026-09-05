@@ -57,6 +57,14 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
 
   bool matched_{false};
   bool is_right_eof_{false};
+  /**
+   * Latched when a full right-side scan yields zero tuples. The right child is independent of the left tuple, so an
+   * empty scan implies every rescan is empty and per-row `Init`/`Next` calls can be skipped (LEFT emits NULL-padded
+   * rows directly, INNER produces nothing more).
+   */
+  bool right_empty_{false};
+  /** True once the current left row's right scan has produced at least one tuple. */
+  bool saw_right_tuple_{false};
 };
 
 }  // namespace bustub
