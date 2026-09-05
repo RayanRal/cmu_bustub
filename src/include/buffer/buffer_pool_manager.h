@@ -12,6 +12,7 @@
 
 #pragma once
 
+#include <atomic>
 #include <condition_variable>  // NOLINT
 #include <list>
 #include <memory>
@@ -80,8 +81,9 @@ class FrameHeader {
   /** @brief The number of pins on this frame keeping the page in memory. */
   std::atomic<size_t> pin_count_;
 
-  /** @brief The dirty flag. */
-  bool is_dirty_;
+  /** @brief The dirty flag. Atomic: set under frame `rwlatch_` (page guards), read under
+   * `bpm_latch_` (evictor) or frame `rwlatch_` (flush paths). */
+  std::atomic<bool> is_dirty_;
 
   /**
    * @brief A pointer to the data of the page that this frame holds.
@@ -90,8 +92,9 @@ class FrameHeader {
    */
   std::vector<char> data_;
 
-  /** @brief The page ID of the page currently stored in this frame. */
-  page_id_t page_id_{INVALID_PAGE_ID};
+  /** @brief The page ID of the page currently stored in this frame. Atomic: written under
+   * `bpm_latch_`, read unlocked only by diagnostics. */
+  std::atomic<page_id_t> page_id_{INVALID_PAGE_ID};
 };
 
 /**
@@ -133,7 +136,9 @@ class BufferPoolManager {
   /**
    * @brief The latch protecting the buffer pool's inner data structures.
    *
-   * TODO(P1) We recommend replacing this comment with details about what this latch actually protects.
+   * Latch order (top-down, never inverted): `bpm_latch_` -> replacer `latch_` -> frame `rwlatch_`.
+   * The evictor may acquire a frame latch while holding `bpm_latch_`; conversely, a frame latch
+   * must never be held when acquiring `bpm_latch_` (`Drop`/`FlushPage` release the frame first).
    */
   std::shared_ptr<std::mutex> bpm_latch_;
 

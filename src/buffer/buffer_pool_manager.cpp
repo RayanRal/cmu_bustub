@@ -46,8 +46,8 @@ auto FrameHeader::GetDataMut() -> char * { return data_.data(); }
 void FrameHeader::Reset() {
   std::fill(data_.begin(), data_.end(), 0);
   pin_count_.store(0);
-  is_dirty_ = false;
-  page_id_ = INVALID_PAGE_ID;
+  is_dirty_.store(false);
+  page_id_.store(INVALID_PAGE_ID);
 }
 
 /**
@@ -163,6 +163,7 @@ auto BufferPoolManager::DeletePage(page_id_t page_id) -> bool {
   page_table_.erase(page_it);
 
   // Reset frame and add to free list
+  BUSTUB_ENSURE(frame->pin_count_.load() == 0, "DeletePage called on pinned frame");
   frame->Reset();
   free_frames_.push_back(frame_id);
 
@@ -249,8 +250,8 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
     }
 
     auto frame = frames_[frame_id];
-    page_id_t victim_page_id = frame->page_id_;
-    bool need_flush = (victim_page_id != INVALID_PAGE_ID && frame->is_dirty_);
+    page_id_t victim_page_id = frame->page_id_.load();
+    bool need_flush = (victim_page_id != INVALID_PAGE_ID && frame->is_dirty_.load());
 
     // Reserve the frame so no other evictor picks it (Evict already removed it from replacer).
     frame->pin_count_.fetch_add(1);
@@ -264,7 +265,7 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
       flushing_pages_.insert(victim_page_id);
     }
     page_table_[page_id] = frame_id;
-    frame->page_id_ = page_id;
+    frame->page_id_.store(page_id);
     replacer_->RecordAccess(frame_id, page_id, access_type);
     replacer_->SetEvictable(frame_id, false);
 
@@ -288,7 +289,7 @@ auto BufferPoolManager::CheckedWritePage(page_id_t page_id, AccessType access_ty
       disk_scheduler_->Schedule(requests);
 
       future.get();
-      frame->is_dirty_ = false;
+      frame->is_dirty_.store(false);
 
       // Unblock future reloaders of the victim; they can now proceed in parallel with our read.
       {
@@ -359,8 +360,8 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
     }
 
     auto frame = frames_[frame_id];
-    page_id_t victim_page_id = frame->page_id_;
-    bool need_flush = (victim_page_id != INVALID_PAGE_ID && frame->is_dirty_);
+    page_id_t victim_page_id = frame->page_id_.load();
+    bool need_flush = (victim_page_id != INVALID_PAGE_ID && frame->is_dirty_.load());
 
     // Reserve the frame so no other evictor picks it.
     frame->pin_count_.fetch_add(1);
@@ -372,7 +373,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
       flushing_pages_.insert(victim_page_id);
     }
     page_table_[page_id] = frame_id;
-    frame->page_id_ = page_id;
+    frame->page_id_.store(page_id);
     replacer_->RecordAccess(frame_id, page_id, access_type);
     replacer_->SetEvictable(frame_id, false);
 
@@ -396,7 +397,7 @@ auto BufferPoolManager::CheckedReadPage(page_id_t page_id, AccessType access_typ
       disk_scheduler_->Schedule(requests);
 
       future.get();
-      frame->is_dirty_ = false;
+      frame->is_dirty_.store(false);
 
       {
         std::scoped_lock evict_latch(*bpm_latch_);
@@ -453,9 +454,9 @@ auto BufferPoolManager::WritePage(page_id_t page_id, AccessType access_type) -> 
     std::cerr << "Frame State:" << std::endl;
     for (size_t i = 0; i < num_frames_; ++i) {
       auto frame = frames_[i];
-      page_id_t pid = frame->page_id_;
+      page_id_t pid = frame->page_id_.load();
       std::cerr << "Frame " << i << ": Page " << pid << ", Pin " << frame->pin_count_.load() << ", Dirty "
-                << frame->is_dirty_ << std::endl;
+                << frame->is_dirty_.load() << std::endl;
     }
     std::abort();
   }
@@ -513,7 +514,7 @@ auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool {
   frame_id_t frame_id = it->second;
   auto frame = frames_[frame_id];
 
-  if (frame->is_dirty_) {
+  if (frame->is_dirty_.load()) {
     std::vector<DiskRequest> requests;
     auto promise = disk_scheduler_->CreatePromise();
     auto future = promise.get_future();
@@ -528,7 +529,7 @@ auto BufferPoolManager::FlushPageUnsafe(page_id_t page_id) -> bool {
     disk_scheduler_->Schedule(requests);
 
     future.get();
-    frame->is_dirty_ = false;
+    frame->is_dirty_.store(false);
   }
   return true;
 }
@@ -569,7 +570,7 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
 
   frame->rwlatch_.lock();
 
-  if (frame->is_dirty_) {
+  if (frame->is_dirty_.load()) {
     std::vector<DiskRequest> requests;
     auto promise = disk_scheduler_->CreatePromise();
     auto future = promise.get_future();
@@ -584,7 +585,7 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
     disk_scheduler_->Schedule(requests);
 
     future.get();
-    frame->is_dirty_ = false;
+    frame->is_dirty_.store(false);
   }
 
   frame->rwlatch_.unlock();
@@ -611,11 +612,21 @@ auto BufferPoolManager::FlushPage(page_id_t page_id) -> bool {
  * `CheckedWritePage`, and `FlushPage`, as it will likely be much easier to understand what to do.
  */
 void BufferPoolManager::FlushAllPagesUnsafe() {
-  std::scoped_lock latch(*bpm_latch_);
-  for (const auto &pair : page_table_) {
-    frame_id_t frame_id = pair.second;
-    auto frame = frames_[frame_id];
-    if (frame->is_dirty_) {
+  // Snapshot (page, frame) under a short lock; I/O runs outside bpm_latch_ so concurrent
+  // workers are not stalled. The pid-vs-frame check guards against a frame reused mid-flush.
+  std::vector<std::pair<page_id_t, std::shared_ptr<FrameHeader>>> snapshot;
+  {
+    std::scoped_lock latch(*bpm_latch_);
+    snapshot.reserve(page_table_.size());
+    for (const auto &pair : page_table_) {
+      snapshot.emplace_back(pair.first, frames_[pair.second]);
+    }
+  }
+  for (const auto &[pid, frame] : snapshot) {
+    if (frame->page_id_.load() != pid) {
+      continue;
+    }
+    if (frame->is_dirty_.load()) {
       std::vector<DiskRequest> requests;
       auto promise = disk_scheduler_->CreatePromise();
       auto future = promise.get_future();
@@ -623,14 +634,14 @@ void BufferPoolManager::FlushAllPagesUnsafe() {
       DiskRequest request;
       request.is_write_ = true;
       request.data_ = const_cast<char *>(frame->GetData());
-      request.page_id_ = pair.first;
+      request.page_id_ = pid;
       request.callback_ = std::move(promise);
 
       requests.push_back(std::move(request));
       disk_scheduler_->Schedule(requests);
 
       future.get();
-      frame->is_dirty_ = false;
+      frame->is_dirty_.store(false);
     }
   }
 }
