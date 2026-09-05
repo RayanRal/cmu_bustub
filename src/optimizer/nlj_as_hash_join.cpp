@@ -10,8 +10,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <algorithm>
+#include <functional>
 #include <memory>
+#include <vector>
 #include "catalog/column.h"
 #include "catalog/schema.h"
 #include "common/exception.h"
