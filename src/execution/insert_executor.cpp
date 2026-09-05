@@ -96,7 +96,8 @@ auto InsertExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<b
         std::optional<RID> new_rid =
             table_info_->table_->InsertTuple(TupleMeta{txn->GetTransactionTempTs(), false}, tuple);
         if (!new_rid.has_value()) {
-          continue;
+          txn->SetTainted();
+          throw ExecutionException("Failed to insert tuple: table is full");
         }
         rid = *new_rid;
         txn->AppendWriteSet(table_info_->oid_, rid);

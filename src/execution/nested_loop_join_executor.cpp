@@ -83,9 +83,14 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
 
       for (; right_idx_ < right_tuples_.size(); ++right_idx_) {
         const auto &right_tuple = right_tuples_[right_idx_];
-        auto value = plan_->Predicate()->EvaluateJoin(&left_tuple, left_executor_->GetOutputSchema(), &right_tuple,
-                                                      right_executor_->GetOutputSchema());
-        if (!value.IsNull() && value.GetAs<bool>()) {
+        // A null predicate means cross join: every pair matches.
+        bool is_match = plan_->Predicate() == nullptr;
+        if (!is_match) {
+          auto value = plan_->Predicate()->EvaluateJoin(&left_tuple, left_executor_->GetOutputSchema(), &right_tuple,
+                                                        right_executor_->GetOutputSchema());
+          is_match = !value.IsNull() && value.GetAs<bool>();
+        }
+        if (is_match) {
           matched_ = true;
           std::vector<Value> values;
           values.reserve(left_executor_->GetOutputSchema().GetColumnCount() +
