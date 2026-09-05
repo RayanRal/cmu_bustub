@@ -46,7 +46,7 @@ void HashJoinExecutor::Init() {
   ht_.clear();
   probe_tuples_.clear();
   probe_idx_ = 0;
-  current_matches_.clear();
+  current_matches_ptr_ = nullptr;
   match_idx_ = 0;
   matched_ = false;
 
@@ -132,7 +132,7 @@ auto HashJoinExecutor::PrepareNextPartition() -> bool {
       probe_idx_ = 0;
       match_idx_ = 0;
       matched_ = false;
-      current_matches_.clear();
+      current_matches_ptr_ = nullptr;
       return true;
     }
   }
@@ -171,16 +171,17 @@ auto HashJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector
 
     if (match_idx_ == 0) {
       HashJoinKey probe_key = MakeLeftJoinKey(&probe_tuple);
-      if (ht_.count(probe_key) > 0) {
-        current_matches_ = ht_[probe_key];
+      auto it = ht_.find(probe_key);
+      if (it != ht_.end()) {
+        current_matches_ptr_ = &it->second;
         matched_ = true;
       } else {
-        current_matches_.clear();
+        current_matches_ptr_ = nullptr;
         matched_ = false;
       }
     }
 
-    const bool has_match = match_idx_ < current_matches_.size();
+    const bool has_match = current_matches_ptr_ != nullptr && match_idx_ < current_matches_ptr_->size();
     const bool emit_null_pad = !has_match && !matched_ && plan_->GetJoinType() == JoinType::LEFT;
 
     if (has_match || emit_null_pad) {
@@ -191,7 +192,7 @@ auto HashJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector
         values.push_back(probe_tuple.GetValue(&left_child_->GetOutputSchema(), i));
       }
       if (has_match) {
-        const auto &build_tuple = current_matches_[match_idx_];
+        const auto &build_tuple = (*current_matches_ptr_)[match_idx_];
         for (uint32_t i = 0; i < right_child_->GetOutputSchema().GetColumnCount(); i++) {
           values.push_back(build_tuple.GetValue(&right_child_->GetOutputSchema(), i));
         }

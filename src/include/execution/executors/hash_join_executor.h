@@ -126,8 +126,8 @@ class HashJoinExecutor : public AbstractExecutor {
   std::vector<Tuple> probe_tuples_;
   size_t probe_idx_{0};
 
-  /** For handling the current probe tuple matches */
-  std::vector<Tuple> current_matches_;
+  /** For handling the current probe tuple matches (non-owning pointer into ht_, nullptr = no match). */
+  const std::vector<Tuple> *current_matches_ptr_{nullptr};
   size_t match_idx_{0};
   bool matched_{false};
 };
