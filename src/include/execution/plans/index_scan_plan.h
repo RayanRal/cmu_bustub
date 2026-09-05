@@ -20,8 +20,22 @@
 #include "concurrency/transaction.h"
 #include "execution/expressions/abstract_expression.h"
 #include "execution/plans/abstract_plan.h"
+#include "type/value.h"
 
 namespace bustub {
+/**
+ * A bound on one index key column for a range scan. Bounds are used only to position the scan (seek key) and for
+ * early termination; the plan's `filter_predicate_` is always applied per tuple, so exclusive endpoints need no
+ * special handling in the executor (the seek/termination keys treat them as inclusive, a safe superset).
+ */
+struct IndexRangeBound {
+  bool has_low_{false};
+  Value low_;
+  bool low_inclusive_{true};
+  bool has_high_{false};
+  Value high_;
+  bool high_inclusive_{true};
+};
 /**
  * IndexScanPlanNode identifies a table that should be scanned with an optional predicate.
  */
@@ -33,14 +47,17 @@ class IndexScanPlanNode : public AbstractPlanNode {
    * @param table_oid The identifier of table to be scanned
    * @param filter_predicate The predicate pushed down to index scan.
    * @param pred_key The key for point lookup
+   * @param range_bounds Per-key-column range bounds for a range scan (empty if not a range scan)
    */
   IndexScanPlanNode(SchemaRef output, table_oid_t table_oid, index_oid_t index_oid,
-                    AbstractExpressionRef filter_predicate = nullptr, std::vector<AbstractExpressionRef> pred_keys = {})
+                    AbstractExpressionRef filter_predicate = nullptr, std::vector<AbstractExpressionRef> pred_keys = {},
+                    std::vector<IndexRangeBound> range_bounds = {})
       : AbstractPlanNode(std::move(output), {}),
         table_oid_(table_oid),
         index_oid_(index_oid),
         filter_predicate_(std::move(filter_predicate)),
-        pred_keys_(std::move(pred_keys)) {}
+        pred_keys_(std::move(pred_keys)),
+        range_bounds_(std::move(range_bounds)) {}
 
   auto GetType() const -> PlanType override { return PlanType::IndexScan; }
 
@@ -67,10 +84,26 @@ class IndexScanPlanNode : public AbstractPlanNode {
    */
   std::vector<AbstractExpressionRef> pred_keys_;
 
+  /**
+   * Per-index-key-column range bounds for a range scan, in key column order. Empty when the node is a point
+   * lookup (see `pred_keys_`) or a full index scan. Only a leading run of bounded columns is used for seeking;
+   * remaining columns are covered by `filter_predicate_`.
+   */
+  std::vector<IndexRangeBound> range_bounds_;
+
   // Add anything you want here for index lookup
 
  protected:
   auto PlanNodeToString() const -> std::string override {
+    if (!range_bounds_.empty()) {
+      std::string bounds;
+      for (size_t i = 0; i < range_bounds_.size(); ++i) {
+        const auto &b = range_bounds_[i];
+        bounds += fmt::format("col{}:[{},{}] ", i, b.has_low_ ? b.low_.ToString() : "-inf",
+                              b.has_high_ ? b.high_.ToString() : "+inf");
+      }
+      return fmt::format("IndexScan {{ index_oid={}, range={}filter={} }}", index_oid_, bounds, filter_predicate_);
+    }
     if (filter_predicate_) {
       return fmt::format("IndexScan {{ index_oid={}, filter={} }}", index_oid_, filter_predicate_);
     }

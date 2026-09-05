@@ -40,6 +40,9 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
   auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); };
 
  private:
+  /** Emit one NULL-padded row for `left_tuple` (LEFT join over an empty right side). */
+  void EmitNullPaddedLeftRow(const Tuple &left_tuple, std::vector<Tuple> *tuple_batch, std::vector<RID> *rid_batch);
+
   /** The NestedLoopJoin plan node to be executed. */
   const NestedLoopJoinPlanNode *plan_;
   /** The child executor that produces tuple for the left side of join. */
@@ -57,6 +60,14 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
 
   bool matched_{false};
   bool is_right_eof_{false};
+  /**
+   * Latched when a full right-side scan yields zero tuples. The right child is independent of the left tuple, so an
+   * empty scan implies every rescan is empty and per-row `Init`/`Next` calls can be skipped (LEFT emits NULL-padded
+   * rows directly, INNER produces nothing more).
+   */
+  bool right_empty_{false};
+  /** True once the current left row's right scan has produced at least one tuple. */
+  bool saw_right_tuple_{false};
 };
 
 }  // namespace bustub

@@ -40,6 +40,7 @@ void IndexScanExecutor::Init() {
     txn->AppendScanPredicate(plan_->table_oid_, plan_->filter_predicate_);
   }
   is_point_lookup_ = !plan_->pred_keys_.empty();
+  is_range_scan_ = !is_point_lookup_ && !plan_->range_bounds_.empty();
   if (is_point_lookup_) {
     rids_.clear();
     rid_idx_ = 0;
@@ -47,6 +48,44 @@ void IndexScanExecutor::Init() {
       Value val = expr->Evaluate(nullptr, plan_->OutputSchema());
       Tuple key_tuple({val}, index_info_->index_->GetKeySchema());
       tree_->ScanKey(key_tuple, &rids_, exec_ctx_->GetTransaction());
+    }
+  } else if (is_range_scan_) {
+    // Materialize the RIDs upfront (like the point-lookup path above) instead of holding a live B+Tree iterator:
+    // Update/Delete executors drain this scan in Init() and then mutate the same index in Next() while this scan
+    // is still alive. A live iterator holds a read latch on a leaf page, so a later index write would deadlock.
+    // Collecting RIDs here releases the iterator before returning. Exclusive endpoints are treated as inclusive
+    // (a safe superset); the filter predicate rejects the extra tuples per row in Next().
+    Schema *key_schema = index_info_->index_->GetKeySchema();
+    std::vector<Value> low_vals;
+    std::vector<Value> high_vals;
+    low_vals.reserve(key_schema->GetColumnCount());
+    high_vals.reserve(key_schema->GetColumnCount());
+    for (uint32_t i = 0; i < key_schema->GetColumnCount(); ++i) {
+      TypeId col_type = key_schema->GetColumn(i).GetType();
+      if (i < plan_->range_bounds_.size() && plan_->range_bounds_[i].has_low_) {
+        low_vals.push_back(plan_->range_bounds_[i].low_);
+      } else {
+        low_vals.push_back(Type::GetMinValue(col_type));
+      }
+      if (i < plan_->range_bounds_.size() && plan_->range_bounds_[i].has_high_) {
+        high_vals.push_back(plan_->range_bounds_[i].high_);
+      } else {
+        high_vals.push_back(Type::GetMaxValue(col_type));
+      }
+    }
+    Tuple low_tuple(low_vals, key_schema);
+    IntegerKeyType_BTree low_key;
+    low_key.SetFromKey(low_tuple);
+    Tuple high_tuple(high_vals, key_schema);
+    IntegerKeyType_BTree high_key;
+    high_key.SetFromKey(high_tuple);
+    IntegerComparatorType_BTree comparator(key_schema);
+    rids_.clear();
+    rid_idx_ = 0;
+    auto iter = tree_->GetBeginIterator(low_key);
+    while (!iter.IsEnd() && comparator((*iter).first, high_key) <= 0) {
+      rids_.push_back((*iter).second);
+      ++iter;
     }
   } else {
     iter_ = std::make_unique<BPlusTreeIndexIteratorForTwoIntegerColumn>(tree_->GetBeginIterator());
@@ -60,7 +99,7 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
 
   while (tuple_batch->size() < batch_size) {
     RID rid;
-    if (is_point_lookup_) {
+    if (is_point_lookup_ || is_range_scan_) {
       if (rid_idx_ < rids_.size()) {
         rid = rids_[rid_idx_++];
       } else {

@@ -50,5 +50,10 @@ class IndexScanExecutor : public AbstractExecutor {
   size_t rid_idx_{0};
   std::unique_ptr<BPlusTreeIndexIteratorForTwoIntegerColumn> iter_;
   bool is_point_lookup_{false};
+  /**
+   * True for a range scan (`plan_->range_bounds_` non-empty). RIDs are materialized in Init() (see .cpp for why);
+   * Next() serves them from `rids_` exactly like the point-lookup path.
+   */
+  bool is_range_scan_{false};
 };
 }  // namespace bustub

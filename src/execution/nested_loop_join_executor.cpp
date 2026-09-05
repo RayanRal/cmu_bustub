@@ -53,8 +53,26 @@ void NestedLoopJoinExecutor::Init() {
 
   matched_ = false;
   is_right_eof_ = false;
+  right_empty_ = false;
+  saw_right_tuple_ = false;
 
   left_executor_->Next(&left_tuples_, &left_rids_, BUSTUB_BATCH_SIZE);
+}
+
+/** Emit one NULL-padded row for `left_tuple` (LEFT join over an empty right side). */
+void NestedLoopJoinExecutor::EmitNullPaddedLeftRow(const Tuple &left_tuple, std::vector<Tuple> *tuple_batch,
+                                                   std::vector<RID> *rid_batch) {
+  std::vector<Value> values;
+  values.reserve(left_executor_->GetOutputSchema().GetColumnCount() +
+                 right_executor_->GetOutputSchema().GetColumnCount());
+  for (uint32_t i = 0; i < left_executor_->GetOutputSchema().GetColumnCount(); ++i) {
+    values.push_back(left_tuple.GetValue(&left_executor_->GetOutputSchema(), i));
+  }
+  for (uint32_t i = 0; i < right_executor_->GetOutputSchema().GetColumnCount(); ++i) {
+    values.push_back(ValueFactory::GetNullValueByType(right_executor_->GetOutputSchema().GetColumn(i).GetType()));
+  }
+  tuple_batch->emplace_back(std::move(values), &plan_->OutputSchema());
+  rid_batch->emplace_back();
 }
 
 /**
@@ -72,6 +90,28 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
   while (left_idx_ < left_tuples_.size()) {
     const auto &left_tuple = left_tuples_[left_idx_];
 
+    if (right_empty_) {
+      // Fast path: the right side is known to be empty, so skip its per-row Init/Next entirely.
+      if (plan_->GetJoinType() == JoinType::INNER) {
+        return !tuple_batch->empty();
+      }
+      EmitNullPaddedLeftRow(left_tuple, tuple_batch, rid_batch);
+
+      // Move to next left tuple
+      left_idx_++;
+      if (left_idx_ >= left_tuples_.size()) {
+        left_idx_ = 0;
+        if (!left_executor_->Next(&left_tuples_, &left_rids_, batch_size)) {
+          return !tuple_batch->empty();
+        }
+      }
+
+      if (tuple_batch->size() >= batch_size) {
+        return true;
+      }
+      continue;
+    }
+
     while (!is_right_eof_) {
       if (right_idx_ >= right_tuples_.size()) {
         right_idx_ = 0;
@@ -79,6 +119,7 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
           is_right_eof_ = true;
           break;
         }
+        saw_right_tuple_ = true;
       }
 
       for (; right_idx_ < right_tuples_.size(); ++right_idx_) {
@@ -113,18 +154,13 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
     }
 
     if (is_right_eof_) {
+      if (!saw_right_tuple_) {
+        // A full scan produced zero right tuples. The right child does not depend on the left tuple, so every
+        // rescan is empty: latch and skip per-row Init/Next for all remaining left rows.
+        right_empty_ = true;
+      }
       if (plan_->GetJoinType() == JoinType::LEFT && !matched_) {
-        std::vector<Value> values;
-        values.reserve(left_executor_->GetOutputSchema().GetColumnCount() +
-                       right_executor_->GetOutputSchema().GetColumnCount());
-        for (uint32_t i = 0; i < left_executor_->GetOutputSchema().GetColumnCount(); ++i) {
-          values.push_back(left_tuple.GetValue(&left_executor_->GetOutputSchema(), i));
-        }
-        for (uint32_t i = 0; i < right_executor_->GetOutputSchema().GetColumnCount(); ++i) {
-          values.push_back(ValueFactory::GetNullValueByType(right_executor_->GetOutputSchema().GetColumn(i).GetType()));
-        }
-        tuple_batch->emplace_back(std::move(values), &plan_->OutputSchema());
-        rid_batch->emplace_back();
+        EmitNullPaddedLeftRow(left_tuple, tuple_batch, rid_batch);
       }
 
       // Move to next left tuple
@@ -135,6 +171,7 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
       right_idx_ = 0;
       matched_ = false;
       is_right_eof_ = false;
+      saw_right_tuple_ = false;
 
       if (left_idx_ >= left_tuples_.size()) {
         left_idx_ = 0;

@@ -23,6 +23,7 @@
 #include "concurrency/transaction.h"
 #include "execution/expressions/abstract_expression.h"
 #include "execution/plans/abstract_plan.h"
+#include "execution/plans/nested_loop_join_plan.h"
 
 namespace bustub {
 
@@ -44,6 +45,13 @@ class Optimizer {
   auto OptimizeMergeFilterNLJ(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
   auto OptimizeNLJAsHashJoin(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
+
+  auto ConvertNLJToHashJoin(const NestedLoopJoinPlanNode &nlj_plan) -> AbstractPlanNodeRef;
+
+  auto ConvertNLJToHashJoinAllOrNothing(const NestedLoopJoinPlanNode &nlj_plan) -> AbstractPlanNodeRef;
+
+  auto TryPushIntoChildNLJ(AbstractPlanNodeRef *child, uint8_t from_side, std::vector<AbstractExpressionRef> *push)
+      -> bool;
 
   auto OptimizeNLJAsIndexJoin(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
