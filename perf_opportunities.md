@@ -9,7 +9,7 @@ and `__mock_t7` = 1M rows, `__mock_t11` = 1M rows, `__mock_t10` = 10K rows, `__m
 
 | Query | Debug single pass | Plan shape | Verdict |
 |---|---|---|---|
-| q1-window (`rank()` over 10M rows) | ~161s | TopN(10) → Filter(rank≤3) → Window → MockScan | Slowest; window sort dominates |
+| q1-window (`rank()` over 10M rows) | ~161s → **~110s** (scan-only baseline 58s; sort phase ~103s → ~52s) | TopN(10) → Filter(rank≤3) → Window → MockScan | Improved 2026-09-06: Schwartzian done; now scan-bound — next step is per-partition TopN pushdown (item 5) |
 | q2 (LEFT JOIN + 32-col agg) | ~67s → **~34s** (join-only 42s → 9s, of which 6.5s is the inherent left scan) | Agg → NLJ-Left (`v < v4`) → t7 × Filter(`1=2`) → t8 | Fixed 2026-09-05: NLJ empty-side fast path; remainder is agg work |
 | q1 (3-way join + agg) | ~49s | Filter → HJ → HJ (+ pushed Filters) | Fixed; residual hash/agg cost |
 | q1-index (10-row lookup) | ~11s | SeqScan + Filter over 1M rows (index exists, unused) | Missing index rewrite |
@@ -25,6 +25,12 @@ evaluations in Debug. The rank/partition scan after the sort is linear and innoc
 Fix: Schwartzian transform — evaluate each tuple's partition/order keys once into flat key arrays
 (~20M evals), sort indices over materialized `Value`s. Executor-local, no plan changes.
 Complexity: medium. Expected impact: removes the large majority of sort evaluations. Risk: low.
+Status (2026-09-06, DONE on `opt/nlj-hashjoin-residual`): implemented in
+`src/execution/window_function_executor.cpp` (flat `part_keys`/`order_keys` arrays; comparator,
+`is_same_partition`, `is_same_order` all run on materialized `Value`s with verbatim null/ASC/DESC
+semantics). Measured: q1-window 161s → 110s; attribution via scan-only baseline (58s over 10M rows)
+shows the sort phase halved (~103s → ~52s) and the query is now scan-bound. Verified: p3.20,
+p3.17–19 green plus targeted ASC/DESC/NULL-partition/peer-group/agg semantics tests.
 Follow-up (high complexity, optimizer + executor): per-partition TopN pushdown, since the query only
 needs `rank <= 3` per partition plus outer `LIMIT 10` — a full 10M-row sort is asymptotically wasteful
 versus per-partition top-3 heaps. Do the Schwartzian first and re-measure.

@@ -52,13 +52,28 @@ void WindowFunctionExecutor::Init() {
     const auto &wf = pair.second;
     std::vector<Value> results(num_tuples);
 
-    std::sort(original_indices.begin(), original_indices.end(), [&](uint32_t idx_a, uint32_t idx_b) {
-      const auto &tuple_a = child_tuples[idx_a];
-      const auto &tuple_b = child_tuples[idx_b];
+    // Schwartzian transform: evaluate partition/order keys once per tuple and sort over the materialized keys.
+    // The comparator below previously re-evaluated O(P + O) expressions per comparison, i.e. O(n log n)
+    // evaluations; the partition/peer scans re-evaluated keys per adjacent pair as well. One O(n) pass replaces all.
+    const size_t num_part_keys = wf.partition_by_.size();
+    const size_t num_order_keys = wf.order_by_.size();
+    std::vector<Value> part_keys(num_tuples * num_part_keys);
+    std::vector<Value> order_keys(num_tuples * num_order_keys);
+    for (uint32_t i = 0; i < num_tuples; ++i) {
+      for (size_t k = 0; k < num_part_keys; ++k) {
+        part_keys[i * num_part_keys + k] =
+            wf.partition_by_[k]->Evaluate(&child_tuples[i], child_executor_->GetOutputSchema());
+      }
+      for (size_t k = 0; k < num_order_keys; ++k) {
+        order_keys[i * num_order_keys + k] =
+            std::get<2>(wf.order_by_[k])->Evaluate(&child_tuples[i], child_executor_->GetOutputSchema());
+      }
+    }
 
-      for (const auto &expr : wf.partition_by_) {
-        Value val_a = expr->Evaluate(&tuple_a, child_executor_->GetOutputSchema());
-        Value val_b = expr->Evaluate(&tuple_b, child_executor_->GetOutputSchema());
+    std::sort(original_indices.begin(), original_indices.end(), [&](uint32_t idx_a, uint32_t idx_b) {
+      for (size_t k = 0; k < num_part_keys; ++k) {
+        const Value &val_a = part_keys[idx_a * num_part_keys + k];
+        const Value &val_b = part_keys[idx_b * num_part_keys + k];
         if (val_a.CompareLessThan(val_b) == CmpBool::CmpTrue) {
           return true;
         }
@@ -67,12 +82,11 @@ void WindowFunctionExecutor::Init() {
         }
       }
 
-      for (const auto &order_by : wf.order_by_) {
-        OrderByType type = std::get<0>(order_by);
-        OrderByNullType null_type = std::get<1>(order_by);
-        const auto &expr = std::get<2>(order_by);
-        Value val_a = expr->Evaluate(&tuple_a, child_executor_->GetOutputSchema());
-        Value val_b = expr->Evaluate(&tuple_b, child_executor_->GetOutputSchema());
+      for (size_t k = 0; k < num_order_keys; ++k) {
+        OrderByType type = std::get<0>(wf.order_by_[k]);
+        OrderByNullType null_type = std::get<1>(wf.order_by_[k]);
+        const Value &val_a = order_keys[idx_a * num_order_keys + k];
+        const Value &val_b = order_keys[idx_b * num_order_keys + k];
 
         if (val_a.IsNull() && val_b.IsNull()) {
           continue;
@@ -108,9 +122,9 @@ void WindowFunctionExecutor::Init() {
     });
 
     auto is_same_partition = [&](uint32_t idx_a, uint32_t idx_b) {
-      for (const auto &expr : wf.partition_by_) {
-        Value val_a = expr->Evaluate(&child_tuples[idx_a], child_executor_->GetOutputSchema());
-        Value val_b = expr->Evaluate(&child_tuples[idx_b], child_executor_->GetOutputSchema());
+      for (size_t k = 0; k < num_part_keys; ++k) {
+        const Value &val_a = part_keys[idx_a * num_part_keys + k];
+        const Value &val_b = part_keys[idx_b * num_part_keys + k];
         if (val_a.CompareEquals(val_b) != CmpBool::CmpTrue) {
           if (!val_a.IsNull() || !val_b.IsNull()) {
             return false;
@@ -121,10 +135,9 @@ void WindowFunctionExecutor::Init() {
     };
 
     auto is_same_order = [&](uint32_t idx_a, uint32_t idx_b) {
-      for (const auto &order_by : wf.order_by_) {
-        const auto &expr = std::get<2>(order_by);
-        Value val_a = expr->Evaluate(&child_tuples[idx_a], child_executor_->GetOutputSchema());
-        Value val_b = expr->Evaluate(&child_tuples[idx_b], child_executor_->GetOutputSchema());
+      for (size_t k = 0; k < num_order_keys; ++k) {
+        const Value &val_a = order_keys[idx_a * num_order_keys + k];
+        const Value &val_b = order_keys[idx_b * num_order_keys + k];
         if (val_a.CompareEquals(val_b) != CmpBool::CmpTrue) {
           if (!val_a.IsNull() || !val_b.IsNull()) {
             return false;
