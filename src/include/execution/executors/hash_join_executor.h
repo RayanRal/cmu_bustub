@@ -37,10 +37,12 @@ struct HashJoinKey {
    */
   auto operator==(const HashJoinKey &other) const -> bool {
     for (uint32_t i = 0; i < other.keys_.size(); i++) {
+      // SQL semantics: NULL never matches, not even NULL == NULL.
+      if (keys_[i].IsNull() || other.keys_[i].IsNull()) {
+        return false;
+      }
       if (keys_[i].CompareEquals(other.keys_[i]) != CmpBool::CmpTrue) {
-        if (!keys_[i].IsNull() || !other.keys_[i].IsNull()) {
-          return false;
-        }
+        return false;
       }
     }
     return true;

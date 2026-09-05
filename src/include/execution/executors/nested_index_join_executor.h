@@ -55,5 +55,7 @@ class NestedIndexJoinExecutor : public AbstractExecutor {
   size_t result_idx_{0};
 
   bool is_new_left_tuple_{true};
+  /** Whether the current left tuple has produced at least one join row (for LEFT padding). */
+  bool matched_{false};
 };
 }  // namespace bustub
