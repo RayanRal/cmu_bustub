@@ -13,7 +13,6 @@
 #pragma once
 
 #include <memory>
-#include <optional>
 #include <vector>
 
 #include "catalog/catalog.h"
@@ -52,14 +51,9 @@ class IndexScanExecutor : public AbstractExecutor {
   std::unique_ptr<BPlusTreeIndexIteratorForTwoIntegerColumn> iter_;
   bool is_point_lookup_{false};
   /**
-   * True for a range scan (`plan_->range_bounds_` non-empty): iteration starts at the lower-bound key and stops
-   * past the upper-bound key. Column-level inclusivity needs no handling here: the seek/termination keys treat
-   * exclusive endpoints as inclusive (a safe superset) and `plan_->filter_predicate_` rejects the rest per tuple.
+   * True for a range scan (`plan_->range_bounds_` non-empty). RIDs are materialized in Init() (see .cpp for why);
+   * Next() serves them from `rids_` exactly like the point-lookup path.
    */
   bool is_range_scan_{false};
-  /** Inclusive upper-bound key for early termination of a range scan. */
-  IntegerKeyType_BTree high_key_;
-  /** Comparator for range-scan bound checks, constructed over the index key schema. */
-  std::optional<IntegerComparatorType_BTree> comparator_;
 };
 }  // namespace bustub

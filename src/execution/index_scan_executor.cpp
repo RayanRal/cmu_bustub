@@ -50,8 +50,11 @@ void IndexScanExecutor::Init() {
       tree_->ScanKey(key_tuple, &rids_, exec_ctx_->GetTransaction());
     }
   } else if (is_range_scan_) {
-    // Build inclusive seek/termination keys: unbounded sides use the column type's min/max value, and exclusive
-    // endpoints are treated as inclusive (a safe superset — the filter predicate rejects the rest per tuple).
+    // Materialize the RIDs upfront (like the point-lookup path above) instead of holding a live B+Tree iterator:
+    // Update/Delete executors drain this scan in Init() and then mutate the same index in Next() while this scan
+    // is still alive. A live iterator holds a read latch on a leaf page, so a later index write would deadlock.
+    // Collecting RIDs here releases the iterator before returning. Exclusive endpoints are treated as inclusive
+    // (a safe superset); the filter predicate rejects the extra tuples per row in Next().
     Schema *key_schema = index_info_->index_->GetKeySchema();
     std::vector<Value> low_vals;
     std::vector<Value> high_vals;
@@ -74,9 +77,16 @@ void IndexScanExecutor::Init() {
     IntegerKeyType_BTree low_key;
     low_key.SetFromKey(low_tuple);
     Tuple high_tuple(high_vals, key_schema);
-    high_key_.SetFromKey(high_tuple);
-    comparator_.emplace(key_schema);
-    iter_ = std::make_unique<BPlusTreeIndexIteratorForTwoIntegerColumn>(tree_->GetBeginIterator(low_key));
+    IntegerKeyType_BTree high_key;
+    high_key.SetFromKey(high_tuple);
+    IntegerComparatorType_BTree comparator(key_schema);
+    rids_.clear();
+    rid_idx_ = 0;
+    auto iter = tree_->GetBeginIterator(low_key);
+    while (!iter.IsEnd() && comparator((*iter).first, high_key) <= 0) {
+      rids_.push_back((*iter).second);
+      ++iter;
+    }
   } else {
     iter_ = std::make_unique<BPlusTreeIndexIteratorForTwoIntegerColumn>(tree_->GetBeginIterator());
   }
@@ -89,7 +99,7 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
 
   while (tuple_batch->size() < batch_size) {
     RID rid;
-    if (is_point_lookup_) {
+    if (is_point_lookup_ || is_range_scan_) {
       if (rid_idx_ < rids_.size()) {
         rid = rids_[rid_idx_++];
       } else {
@@ -97,11 +107,7 @@ auto IndexScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vecto
       }
     } else {
       if (iter_ && !iter_->IsEnd()) {
-        auto entry = (*(*iter_));
-        if (is_range_scan_ && (*comparator_)(entry.first, high_key_) > 0) {
-          break;
-        }
-        rid = entry.second;
+        rid = (*(*iter_)).second;
         ++(*iter_);
       } else {
         break;
