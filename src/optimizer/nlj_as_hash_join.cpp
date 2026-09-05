@@ -202,6 +202,7 @@ auto Optimizer::TryPushIntoChildNLJ(AbstractPlanNodeRef *child, uint8_t from_sid
   }
   const size_t child_left_width = child_nlj.GetLeftPlan()->OutputSchema().GetColumnCount();
   std::vector<AbstractExpressionRef> rewritten;
+  rewritten.reserve(push->size());
   for (auto &conjunct : *push) {
     rewritten.push_back(RewriteForChildJoin(conjunct, from_side, child_left_width));
   }
@@ -250,6 +251,7 @@ auto Optimizer::ConvertNLJToHashJoin(const NestedLoopJoinPlanNode &nlj_plan) -> 
   // NB: |=, not || — both sides must always be attempted.
   pushed_down |= TryPushIntoChildNLJ(&right_child, 1, &right_push);
   std::vector<AbstractExpressionRef> residuals;
+  residuals.reserve(left_push.size() + right_push.size() + keep.size());
   for (auto &conjunct : left_push) {
     residuals.push_back(RewriteForJoinOutput(conjunct, left_width));
   }
@@ -258,6 +260,8 @@ auto Optimizer::ConvertNLJToHashJoin(const NestedLoopJoinPlanNode &nlj_plan) -> 
   }
   std::vector<AbstractExpressionRef> left_keys;
   std::vector<AbstractExpressionRef> right_keys;
+  left_keys.reserve(keep.size());
+  right_keys.reserve(keep.size());
   for (auto &conjunct : keep) {
     AbstractExpressionRef left_key;
     AbstractExpressionRef right_key;
@@ -277,6 +281,7 @@ auto Optimizer::ConvertNLJToHashJoin(const NestedLoopJoinPlanNode &nlj_plan) -> 
                                                       std::move(right_child), predicate, nlj_plan.GetJoinType());
     }
     std::vector<AbstractExpressionRef> remaining;
+    remaining.reserve(keep.size() + left_push.size() + right_push.size());
     for (auto &conjunct : keep) {
       remaining.push_back(conjunct);
     }
