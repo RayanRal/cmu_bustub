@@ -31,9 +31,15 @@ CountMinSketch<KeyType>::CountMinSketch(uint32_t width, uint32_t depth) : width_
     throw std::invalid_argument("Width and depth must be greater than zero.");
   }
 
-  // Initialize the 2D matrix (depth rows, width columns) with zeros and assign it to sketch
+  // Initialize the 2D matrix (depth rows, width columns) with zeros and assign it to sketch.
+  // Note: vector<atomic<uint32_t>>(width_) leaves atomics indeterminate (default ctor),
+  // so explicitly zero each counter.
   for (size_t i = 0; i < depth_; ++i) {
-    sketch_.emplace_back(width_);
+    std::vector<std::atomic<uint32_t>> row(width_);
+    for (auto &c : row) {
+      c.store(0, std::memory_order_relaxed);
+    }
+    sketch_.emplace_back(std::move(row));
   }
 
   /** @spring2026 PLEASE DO NOT MODIFY THE FOLLOWING */
@@ -47,7 +53,12 @@ CountMinSketch<KeyType>::CountMinSketch(uint32_t width, uint32_t depth) : width_
 template <typename KeyType>
 CountMinSketch<KeyType>::CountMinSketch(CountMinSketch &&other) noexcept : width_(other.width_), depth_(other.depth_) {
   sketch_ = std::move(other.sketch_);
-  hash_functions_ = std::move(other.hash_functions_);
+  // Do NOT move hash_functions_: each lambda captures `this` (the source object).
+  // Rebuild bound to the new object so moved-to sketch never dangles on `other`.
+  hash_functions_.reserve(depth_);
+  for (size_t i = 0; i < depth_; ++i) {
+    hash_functions_.push_back(this->HashFunction(i));
+  }
 }
 
 template <typename KeyType>
@@ -56,7 +67,11 @@ auto CountMinSketch<KeyType>::operator=(CountMinSketch &&other) noexcept -> Coun
     width_ = other.width_;
     depth_ = other.depth_;
     sketch_ = std::move(other.sketch_);
-    hash_functions_ = std::move(other.hash_functions_);
+    hash_functions_.clear();
+    hash_functions_.reserve(depth_);
+    for (size_t i = 0; i < depth_; ++i) {
+      hash_functions_.push_back(this->HashFunction(i));
+    }
   }
   return *this;
 }
@@ -95,9 +110,10 @@ auto CountMinSketch<KeyType>::Count(const KeyType &item) const -> uint32_t {
 
 template <typename KeyType>
 void CountMinSketch<KeyType>::Clear() {
-  sketch_.clear();
-  for (size_t i = 0; i < depth_; ++i) {
-    sketch_.emplace_back(width_);
+  for (auto &row : sketch_) {
+    for (auto &c : row) {
+      c.store(0, std::memory_order_relaxed);
+    }
   }
 }
 
@@ -112,13 +128,15 @@ auto CountMinSketch<KeyType>::TopK(uint16_t k, const std::vector<KeyType> &candi
     result.emplace_back(candidate, Count(candidate));
   }
 
-  // Sort by count in descending order
-  std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
-
-  // Return top k (or all if fewer than k)
+  // Partial selection: O(N) partition + O(k log k) final sort instead of O(N log N).
   if (result.size() > k) {
+    std::nth_element(result.begin(), result.begin() + k, result.end(),
+                     [](const auto &a, const auto &b) { return a.second > b.second; });
     result.resize(k);
   }
+
+  // Sort by count in descending order
+  std::sort(result.begin(), result.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
 
   return result;
 }

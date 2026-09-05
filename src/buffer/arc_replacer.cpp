@@ -41,23 +41,29 @@ ArcReplacer::ArcReplacer(size_t num_frames) : replacer_size_(num_frames) {}
  * @return frame id of the evicted frame, or std::nullopt if cannot evict
  */
 auto ArcReplacer::Evict() -> std::optional<frame_id_t> {
+  std::scoped_lock lock(latch_);
   auto try_evict_from = [&](std::list<frame_id_t> &live_list, std::list<page_id_t> &ghost_list,
                             ArcStatus ghost_status) -> std::optional<frame_id_t> {
     for (auto it = live_list.rbegin(); it != live_list.rend(); ++it) {
       frame_id_t frame_id = *it;
-      auto frame_status = alive_map_[frame_id];
-      if (frame_status->evictable_) {
-        if (frame_status->alive_iter_) {
-          live_list.erase(*frame_status->alive_iter_);
-        }
-        ghost_list.push_front(frame_status->page_id_);
-        frame_status->ghost_iter_ = ghost_list.begin();
-        alive_map_.erase(frame_id);
-        ghost_map_[frame_status->page_id_] = frame_status;
-        frame_status->arc_status_ = ghost_status;
-        curr_size_--;
-        return frame_id;
+      auto map_it = alive_map_.find(frame_id);
+      if (map_it == alive_map_.end()) {
+        continue;
       }
+      auto frame_status = map_it->second;
+      if (frame_status == nullptr || !frame_status->evictable_) {
+        continue;
+      }
+      if (frame_status->alive_iter_) {
+        live_list.erase(*frame_status->alive_iter_);
+      }
+      ghost_list.push_front(frame_status->page_id_);
+      frame_status->ghost_iter_ = ghost_list.begin();
+      alive_map_.erase(frame_id);
+      ghost_map_[frame_status->page_id_] = frame_status;
+      frame_status->arc_status_ = ghost_status;
+      curr_size_--;
+      return frame_id;
     }
     return std::nullopt;
   };

@@ -37,10 +37,12 @@ struct HashJoinKey {
    */
   auto operator==(const HashJoinKey &other) const -> bool {
     for (uint32_t i = 0; i < other.keys_.size(); i++) {
+      // SQL semantics: NULL never matches, not even NULL == NULL.
+      if (keys_[i].IsNull() || other.keys_[i].IsNull()) {
+        return false;
+      }
       if (keys_[i].CompareEquals(other.keys_[i]) != CmpBool::CmpTrue) {
-        if (!keys_[i].IsNull() || !other.keys_[i].IsNull()) {
-          return false;
-        }
+        return false;
       }
     }
     return true;
@@ -126,8 +128,8 @@ class HashJoinExecutor : public AbstractExecutor {
   std::vector<Tuple> probe_tuples_;
   size_t probe_idx_{0};
 
-  /** For handling the current probe tuple matches */
-  std::vector<Tuple> current_matches_;
+  /** For handling the current probe tuple matches (non-owning pointer into ht_, nullptr = no match). */
+  const std::vector<Tuple> *current_matches_ptr_{nullptr};
   size_t match_idx_{0};
   bool matched_{false};
 };

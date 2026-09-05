@@ -149,11 +149,17 @@ void TransactionManager::Abort(Transaction *txn) {
     throw Exception("txn not in running or tainted state");
   }
 
-  std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
-  txn->state_ = TransactionState::ABORTED;
-  running_txns_.RemoveTxn(txn->read_ts_);
+  // Snapshot the write set under a short lock, then release the mutex before doing I/O.
+  // Holding txn_map_mutex_ across restores would block Begin/GC/Commit for the whole abort.
+  // (State is published as ABORTED up front, same as before; visibility is timestamp-based.)
+  auto write_set = txn->write_set_;
+  {
+    std::unique_lock<std::shared_mutex> lck(txn_map_mutex_);
+    txn->state_ = TransactionState::ABORTED;
+    running_txns_.RemoveTxn(txn->read_ts_);
+  }
 
-  for (const auto &[table_oid, rids] : txn->write_set_) {
+  for (const auto &[table_oid, rids] : write_set) {
     auto table_info = catalog_->GetTable(table_oid);
     for (const auto &rid : rids) {
       auto check_func = [txn_id = txn->GetTransactionId()](const TupleMeta &meta, const Tuple &tuple, RID rid,

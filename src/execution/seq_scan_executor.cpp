@@ -61,10 +61,15 @@ auto SeqScanExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::vector<
     if (undo_logs.has_value()) {
       auto reconstructed_tuple = ReconstructTuple(&table_info->schema_, tuple, meta, *undo_logs);
       if (reconstructed_tuple.has_value()) {
-        if (plan_->filter_predicate_ == nullptr ||
-            plan_->filter_predicate_->Evaluate(&(*reconstructed_tuple), plan_->OutputSchema()).GetAs<bool>()) {
+        if (plan_->filter_predicate_ == nullptr) {
           tuple_batch->push_back(std::move(*reconstructed_tuple));
           rid_batch->push_back(rid);
+        } else {
+          auto value = plan_->filter_predicate_->Evaluate(&(*reconstructed_tuple), plan_->OutputSchema());
+          if (!value.IsNull() && value.GetAs<bool>()) {
+            tuple_batch->push_back(std::move(*reconstructed_tuple));
+            rid_batch->push_back(rid);
+          }
         }
       }
     }

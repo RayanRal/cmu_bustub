@@ -12,6 +12,8 @@
 
 #include "execution/executors/nested_index_join_executor.h"
 #include "common/macros.h"
+#include "concurrency/transaction_manager.h"
+#include "execution/execution_common.h"
 #include "type/value_factory.h"
 
 namespace bustub {
@@ -44,6 +46,7 @@ void NestedIndexJoinExecutor::Init() {
   result_rids_.clear();
   result_idx_ = 0;
   is_new_left_tuple_ = true;
+  matched_ = false;
 
   child_executor_->Next(&left_tuples_, &left_rids_, BUSTUB_BATCH_SIZE);
 }
@@ -63,16 +66,26 @@ auto NestedIndexJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std:
       index_info_->index_->ScanKey(key_tuple, &result_rids_, exec_ctx_->GetTransaction());
       result_idx_ = 0;
       is_new_left_tuple_ = false;
+      matched_ = false;
     }
 
     if (result_idx_ < result_rids_.size()) {
+      auto *txn = exec_ctx_->GetTransaction();
+      auto *txn_mgr = exec_ctx_->GetTransactionManager();
       for (; result_idx_ < result_rids_.size(); ++result_idx_) {
-        Tuple inner_tuple;
-        auto [meta, fetched_tuple] = inner_table_info_->table_->GetTuple(result_rids_[result_idx_]);
-        if (meta.is_deleted_) {
+        RID inner_rid = result_rids_[result_idx_];
+        auto [meta, fetched_tuple, undo_link] =
+            GetTupleAndUndoLink(txn_mgr, inner_table_info_->table_.get(), inner_rid);
+        auto undo_logs = CollectUndoLogs(inner_rid, meta, fetched_tuple, undo_link, txn, txn_mgr);
+        if (!undo_logs.has_value()) {
           continue;
         }
-        inner_tuple = std::move(fetched_tuple);
+        auto reconstructed = ReconstructTuple(&plan_->InnerTableSchema(), fetched_tuple, meta, *undo_logs);
+        if (!reconstructed.has_value()) {
+          continue;
+        }
+        const Tuple &inner_tuple = *reconstructed;
+        matched_ = true;
 
         std::vector<Value> values;
         values.reserve(child_executor_->GetOutputSchema().GetColumnCount() +
@@ -91,22 +104,19 @@ auto NestedIndexJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std:
           return true;
         }
       }
-    } else {
-      // result_rids_ is empty or all processed
-      if (plan_->GetJoinType() == JoinType::LEFT && result_idx_ == 0) {
-        // Only if we haven't matched anything for this left tuple
-        std::vector<Value> values;
-        values.reserve(child_executor_->GetOutputSchema().GetColumnCount() +
-                       plan_->InnerTableSchema().GetColumnCount());
-        for (uint32_t i = 0; i < child_executor_->GetOutputSchema().GetColumnCount(); ++i) {
-          values.push_back(left_tuple.GetValue(&child_executor_->GetOutputSchema(), i));
-        }
-        for (uint32_t i = 0; i < plan_->InnerTableSchema().GetColumnCount(); ++i) {
-          values.push_back(ValueFactory::GetNullValueByType(plan_->InnerTableSchema().GetColumn(i).GetType()));
-        }
-        tuple_batch->emplace_back(std::move(values), &plan_->OutputSchema());
-        rid_batch->emplace_back();
+    }
+    // No visible match for this left tuple: pad with NULLs for LEFT join.
+    if (!matched_ && plan_->GetJoinType() == JoinType::LEFT) {
+      std::vector<Value> values;
+      values.reserve(child_executor_->GetOutputSchema().GetColumnCount() + plan_->InnerTableSchema().GetColumnCount());
+      for (uint32_t i = 0; i < child_executor_->GetOutputSchema().GetColumnCount(); ++i) {
+        values.push_back(left_tuple.GetValue(&child_executor_->GetOutputSchema(), i));
       }
+      for (uint32_t i = 0; i < plan_->InnerTableSchema().GetColumnCount(); ++i) {
+        values.push_back(ValueFactory::GetNullValueByType(plan_->InnerTableSchema().GetColumn(i).GetType()));
+      }
+      tuple_batch->emplace_back(std::move(values), &plan_->OutputSchema());
+      rid_batch->emplace_back();
     }
 
     // Move to next left tuple

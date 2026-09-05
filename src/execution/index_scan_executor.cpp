@@ -29,6 +29,9 @@ IndexScanExecutor::IndexScanExecutor(ExecutorContext *exec_ctx, const IndexScanP
   table_info_ = catalog->GetTable(plan_->table_oid_);
   index_info_ = catalog->GetIndex(plan_->index_oid_);
   tree_ = dynamic_cast<BPlusTreeIndexForTwoIntegerColumn *>(index_info_->index_.get());
+  if (tree_ == nullptr) {
+    throw ExecutionException("Index scan requires a B+Tree index");
+  }
 }
 
 void IndexScanExecutor::Init() {

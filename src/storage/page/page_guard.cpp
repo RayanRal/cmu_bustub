@@ -114,7 +114,7 @@ auto ReadPageGuard::GetData() const -> const char * {
  */
 auto ReadPageGuard::IsDirty() const -> bool {
   BUSTUB_ENSURE(is_valid_, "tried to use an invalid read guard");
-  return frame_->is_dirty_;
+  return frame_->is_dirty_.load();
 }
 
 /**
@@ -266,7 +266,7 @@ auto WritePageGuard::GetDataMut() -> char * {
  */
 auto WritePageGuard::IsDirty() const -> bool {
   BUSTUB_ENSURE(is_valid_, "tried to use an invalid write guard");
-  return frame_->is_dirty_;
+  return frame_->is_dirty_.load();
 }
 
 /**
@@ -276,7 +276,7 @@ auto WritePageGuard::IsDirty() const -> bool {
  */
 void WritePageGuard::Flush() {
   BUSTUB_ENSURE(is_valid_, "tried to flush an invalid write guard");
-  if (frame_->is_dirty_) {
+  if (frame_->is_dirty_.load()) {
     std::vector<DiskRequest> requests;
     auto promise = disk_scheduler_->CreatePromise();
     auto future = promise.get_future();
@@ -291,7 +291,7 @@ void WritePageGuard::Flush() {
     disk_scheduler_->Schedule(requests);
 
     future.get();
-    frame_->is_dirty_ = false;
+    frame_->is_dirty_.store(false);
   }
 }
 
@@ -309,7 +309,7 @@ void WritePageGuard::Drop() {
     return;
   }
 
-  frame_->is_dirty_ = true;
+  frame_->is_dirty_.store(true);
   frame_->rwlatch_.unlock();
 
   {

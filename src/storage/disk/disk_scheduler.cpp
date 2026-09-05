@@ -11,6 +11,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "storage/disk/disk_scheduler.h"
+#include <exception>
 #include <vector>
 #include "common/macros.h"
 #include "storage/disk/disk_manager.h"
@@ -57,14 +58,20 @@ void DiskScheduler::StartWorkerThread() {
     }
 
     auto &disk_request = request.value();
-    if (disk_request.is_write_) {
-      disk_manager_->WritePage(disk_request.page_id_, disk_request.data_);
-    } else {
-      disk_manager_->ReadPage(disk_request.page_id_, disk_request.data_);
+    try {
+      if (disk_request.is_write_) {
+        disk_manager_->WritePage(disk_request.page_id_, disk_request.data_);
+      } else {
+        disk_manager_->ReadPage(disk_request.page_id_, disk_request.data_);
+      }
+      // Signal completion via the promise
+      disk_request.callback_.set_value(true);
+    } catch (...) {
+      try {
+        disk_request.callback_.set_exception(std::current_exception());
+      } catch (...) {
+      }
     }
-
-    // Signal completion via the promise
-    disk_request.callback_.set_value(true);
   }
 }
 

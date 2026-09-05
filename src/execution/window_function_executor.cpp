@@ -160,7 +160,7 @@ void WindowFunctionExecutor::Init() {
           }
           break;
         default:
-          break;
+          throw NotImplementedException("unsupported window function type");
       }
     };
 
