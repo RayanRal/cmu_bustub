@@ -52,9 +52,7 @@ void WindowFunctionExecutor::Init() {
     const auto &wf = pair.second;
     std::vector<Value> results(num_tuples);
 
-    // Schwartzian transform: evaluate partition/order keys once per tuple and sort over the materialized keys.
-    // The comparator below previously re-evaluated O(P + O) expressions per comparison, i.e. O(n log n)
-    // evaluations; the partition/peer scans re-evaluated keys per adjacent pair as well. One O(n) pass replaces all.
+    // Evaluate partition/order keys once per tuple; sort and peer checks reuse the materialized keys.
     const size_t num_part_keys = wf.partition_by_.size();
     const size_t num_order_keys = wf.order_by_.size();
     std::vector<Value> part_keys(num_tuples * num_part_keys);

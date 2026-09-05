@@ -11,11 +11,9 @@
 //===----------------------------------------------------------------------===//
 
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <vector>
-#include "catalog/column.h"
-#include "catalog/schema.h"
-#include "common/exception.h"
 #include "common/macros.h"
 #include "execution/expressions/column_value_expression.h"
 #include "execution/expressions/comparison_expression.h"
@@ -25,9 +23,7 @@
 #include "execution/plans/filter_plan.h"
 #include "execution/plans/hash_join_plan.h"
 #include "execution/plans/nested_loop_join_plan.h"
-#include "execution/plans/projection_plan.h"
 #include "optimizer/optimizer.h"
-#include "type/type_id.h"
 #include "type/value_factory.h"
 
 namespace bustub {
@@ -35,37 +31,46 @@ namespace bustub {
 namespace {
 
 /** Which side(s) of a join an expression references. */
-enum class RefSide : uint8_t { NONE = 0, LEFT = 1, RIGHT = 2, BOTH = 3 };
+enum class RefSide { NONE, LEFT, RIGHT, BOTH };
 
 auto ClassifyRefs(const AbstractExpressionRef &expr) -> RefSide {
-  uint8_t mask = 0;
+  bool left = false;
+  bool right = false;
   std::function<void(const AbstractExpressionRef &)> visit = [&](const AbstractExpressionRef &node) {
     if (const auto *col = dynamic_cast<const ColumnValueExpression *>(node.get()); col != nullptr) {
-      mask |= (col->GetTupleIdx() == 0 ? 1 : 2);
+      if (col->GetTupleIdx() == 0) {
+        left = true;
+      } else {
+        right = true;
+      }
     }
     for (const auto &child : node->GetChildren()) {
       visit(child);
     }
   };
   visit(expr);
-  if (mask == 1) {
+  if (left && right) {
+    return RefSide::BOTH;
+  }
+  if (left) {
     return RefSide::LEFT;
   }
-  if (mask == 2) {
+  if (right) {
     return RefSide::RIGHT;
   }
-  return mask == 0 ? RefSide::NONE : RefSide::BOTH;
+  return RefSide::NONE;
 }
 
 /** Split a predicate into its top-level AND conjuncts. */
-void SplitConjuncts(const AbstractExpressionRef &expr, std::vector<AbstractExpressionRef> *conjuncts) {
+auto SplitConjuncts(const AbstractExpressionRef &expr) -> std::vector<AbstractExpressionRef> {
   if (const auto *logic_expr = dynamic_cast<const LogicExpression *>(expr.get());
       logic_expr != nullptr && logic_expr->logic_type_ == LogicType::And) {
-    SplitConjuncts(logic_expr->GetChildAt(0), conjuncts);
-    SplitConjuncts(logic_expr->GetChildAt(1), conjuncts);
-    return;
+    auto conjuncts = SplitConjuncts(logic_expr->GetChildAt(0));
+    auto rest = SplitConjuncts(logic_expr->GetChildAt(1));
+    conjuncts.insert(conjuncts.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.end()));
+    return conjuncts;
   }
-  conjuncts->push_back(expr);
+  return {expr};
 }
 
 /**
@@ -143,6 +148,22 @@ auto ExtractKeyPair(const AbstractExpressionRef &expr, AbstractExpressionRef *le
   return false;
 }
 
+/** Extract equi-join key pairs from every conjunct. Returns false if any conjunct is not one. */
+auto TryExtractAllKeys(const std::vector<AbstractExpressionRef> &conjuncts,
+                       std::vector<AbstractExpressionRef> *left_keys, std::vector<AbstractExpressionRef> *right_keys)
+    -> bool {
+  for (const auto &conjunct : conjuncts) {
+    AbstractExpressionRef left_key;
+    AbstractExpressionRef right_key;
+    if (!ExtractKeyPair(conjunct, &left_key, &right_key)) {
+      return false;
+    }
+    left_keys->push_back(std::move(left_key));
+    right_keys->push_back(std::move(right_key));
+  }
+  return !left_keys->empty();
+}
+
 }  // namespace
 
 auto Optimizer::OptimizeNLJAsHashJoin(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef {
@@ -154,22 +175,50 @@ auto Optimizer::OptimizeNLJAsHashJoin(const AbstractPlanNodeRef &plan) -> Abstra
 
   if (optimized_plan->GetType() == PlanType::NestedLoopJoin) {
     const auto &nlj_plan = dynamic_cast<const NestedLoopJoinPlanNode &>(*optimized_plan);
+    const auto &predicate = nlj_plan.Predicate();
+    if (predicate == nullptr || IsPredicateTrue(predicate)) {
+      return optimized_plan;
+    }
     return ConvertNLJToHashJoin(nlj_plan);
   }
 
   return optimized_plan;
 }
 
+/**
+ * Push single-side conjuncts into a child NLJ(true) inner join so deeper levels can convert too.
+ * Rewrites the conjuncts into the child's tuple space, rebuilds the child with the folded predicate,
+ * and converts it recursively. Clears `push` and returns true on success; otherwise leaves both untouched.
+ */
+auto Optimizer::TryPushIntoChildNLJ(AbstractPlanNodeRef *child, uint8_t from_side,
+                                    std::vector<AbstractExpressionRef> *push) -> bool {
+  if (push->empty() || (*child)->GetType() != PlanType::NestedLoopJoin) {
+    return false;
+  }
+  const auto &child_nlj = dynamic_cast<const NestedLoopJoinPlanNode &>(**child);
+  if (child_nlj.Predicate() == nullptr || !IsPredicateTrue(child_nlj.Predicate()) ||
+      child_nlj.GetJoinType() != JoinType::INNER) {
+    return false;
+  }
+  const size_t child_left_width = child_nlj.GetLeftPlan()->OutputSchema().GetColumnCount();
+  std::vector<AbstractExpressionRef> rewritten;
+  for (auto &conjunct : *push) {
+    rewritten.push_back(RewriteForChildJoin(conjunct, from_side, child_left_width));
+  }
+  auto rebuilt = std::make_shared<NestedLoopJoinPlanNode>(child_nlj.output_schema_, child_nlj.GetLeftPlan(),
+                                                          child_nlj.GetRightPlan(), FoldConjuncts(std::move(rewritten)),
+                                                          child_nlj.GetJoinType());
+  *child = ConvertNLJToHashJoin(*rebuilt);
+  push->clear();
+  return true;
+}
+
 auto Optimizer::ConvertNLJToHashJoin(const NestedLoopJoinPlanNode &nlj_plan) -> AbstractPlanNodeRef {
   const auto &predicate = nlj_plan.Predicate();
-  if (predicate == nullptr || IsPredicateTrue(predicate)) {
-    return std::make_shared<NestedLoopJoinPlanNode>(nlj_plan.output_schema_, nlj_plan.GetLeftPlan(),
-                                                    nlj_plan.GetRightPlan(), predicate, nlj_plan.GetJoinType());
-  }
+  BUSTUB_ASSERT(predicate != nullptr && !IsPredicateTrue(predicate),
+                "cross joins and NLJ(true) never reach hash join conversion");
 
-  // Filter-above-hash-join and predicate pushdown preserve semantics only for inner joins: for outer joins,
-  // rows failing a pushed predicate must be null-padded rather than dropped, so fall back to the legacy
-  // all-or-nothing rewrite (pure equi-conditions only).
+  // Residuals and pushdown preserve semantics for INNER joins only; outer joins use legacy all-or-nothing below.
   if (nlj_plan.GetJoinType() != JoinType::INNER) {
     return ConvertNLJToHashJoinAllOrNothing(nlj_plan);
   }
@@ -180,9 +229,7 @@ auto Optimizer::ConvertNLJToHashJoin(const NestedLoopJoinPlanNode &nlj_plan) -> 
   std::vector<AbstractExpressionRef> left_push;
   std::vector<AbstractExpressionRef> right_push;
   std::vector<AbstractExpressionRef> keep;
-  std::vector<AbstractExpressionRef> conjuncts;
-  SplitConjuncts(predicate, &conjuncts);
-  for (auto &conjunct : conjuncts) {
+  for (auto &conjunct : SplitConjuncts(predicate)) {
     switch (ClassifyRefs(conjunct)) {
       case RefSide::LEFT:
         left_push.push_back(std::move(conjunct));
@@ -196,54 +243,19 @@ auto Optimizer::ConvertNLJToHashJoin(const NestedLoopJoinPlanNode &nlj_plan) -> 
     }
   }
 
-  // Push single-side conjuncts into NLJ(true) inner-join children so deeper levels can convert too.
   // Anything that cannot be pushed stays at this level and is evaluated above the hash join.
   auto left_child = nlj_plan.GetLeftPlan();
-  bool pushed_down = false;
-  std::vector<AbstractExpressionRef> residuals;
-  if (!left_push.empty() && left_child->GetType() == PlanType::NestedLoopJoin) {
-    const auto &child_nlj = dynamic_cast<const NestedLoopJoinPlanNode &>(*left_child);
-    if (child_nlj.Predicate() != nullptr && IsPredicateTrue(child_nlj.Predicate()) &&
-        child_nlj.GetJoinType() == JoinType::INNER) {
-      const size_t child_left_width = child_nlj.GetLeftPlan()->OutputSchema().GetColumnCount();
-      std::vector<AbstractExpressionRef> rewritten;
-      for (auto &conjunct : left_push) {
-        rewritten.push_back(RewriteForChildJoin(conjunct, 0, child_left_width));
-      }
-      left_child = std::make_shared<NestedLoopJoinPlanNode>(
-          child_nlj.output_schema_, child_nlj.GetLeftPlan(), child_nlj.GetRightPlan(),
-          FoldConjuncts(std::move(rewritten)), child_nlj.GetJoinType());
-      left_child = ConvertNLJToHashJoin(dynamic_cast<const NestedLoopJoinPlanNode &>(*left_child));
-      left_push.clear();
-      pushed_down = true;
-    }
-  }
   auto right_child = nlj_plan.GetRightPlan();
-  if (!right_push.empty() && right_child->GetType() == PlanType::NestedLoopJoin) {
-    const auto &child_nlj = dynamic_cast<const NestedLoopJoinPlanNode &>(*right_child);
-    if (child_nlj.Predicate() != nullptr && IsPredicateTrue(child_nlj.Predicate()) &&
-        child_nlj.GetJoinType() == JoinType::INNER) {
-      const size_t child_left_width = child_nlj.GetLeftPlan()->OutputSchema().GetColumnCount();
-      std::vector<AbstractExpressionRef> rewritten;
-      for (auto &conjunct : right_push) {
-        rewritten.push_back(RewriteForChildJoin(conjunct, 1, child_left_width));
-      }
-      right_child = std::make_shared<NestedLoopJoinPlanNode>(
-          child_nlj.output_schema_, child_nlj.GetLeftPlan(), child_nlj.GetRightPlan(),
-          FoldConjuncts(std::move(rewritten)), child_nlj.GetJoinType());
-      right_child = ConvertNLJToHashJoin(dynamic_cast<const NestedLoopJoinPlanNode &>(*right_child));
-      right_push.clear();
-      pushed_down = true;
-    }
-  }
+  bool pushed_down = TryPushIntoChildNLJ(&left_child, 0, &left_push);
+  // NB: |=, not || — both sides must always be attempted.
+  pushed_down |= TryPushIntoChildNLJ(&right_child, 1, &right_push);
+  std::vector<AbstractExpressionRef> residuals;
   for (auto &conjunct : left_push) {
     residuals.push_back(RewriteForJoinOutput(conjunct, left_width));
   }
   for (auto &conjunct : right_push) {
     residuals.push_back(RewriteForJoinOutput(conjunct, left_width));
   }
-
-  // Extract equi-join keys from the conjuncts that reference both sides.
   std::vector<AbstractExpressionRef> left_keys;
   std::vector<AbstractExpressionRef> right_keys;
   for (auto &conjunct : keep) {
@@ -293,22 +305,9 @@ auto Optimizer::ConvertNLJToHashJoin(const NestedLoopJoinPlanNode &nlj_plan) -> 
 }
 
 auto Optimizer::ConvertNLJToHashJoinAllOrNothing(const NestedLoopJoinPlanNode &nlj_plan) -> AbstractPlanNodeRef {
-  std::vector<AbstractExpressionRef> conjuncts;
-  SplitConjuncts(nlj_plan.Predicate(), &conjuncts);
   std::vector<AbstractExpressionRef> left_keys;
   std::vector<AbstractExpressionRef> right_keys;
-  for (auto &conjunct : conjuncts) {
-    AbstractExpressionRef left_key;
-    AbstractExpressionRef right_key;
-    if (!ExtractKeyPair(conjunct, &left_key, &right_key)) {
-      return std::make_shared<NestedLoopJoinPlanNode>(nlj_plan.output_schema_, nlj_plan.GetLeftPlan(),
-                                                      nlj_plan.GetRightPlan(), nlj_plan.Predicate(),
-                                                      nlj_plan.GetJoinType());
-    }
-    left_keys.push_back(std::move(left_key));
-    right_keys.push_back(std::move(right_key));
-  }
-  if (left_keys.empty()) {
+  if (!TryExtractAllKeys(SplitConjuncts(nlj_plan.Predicate()), &left_keys, &right_keys)) {
     return std::make_shared<NestedLoopJoinPlanNode>(nlj_plan.output_schema_, nlj_plan.GetLeftPlan(),
                                                     nlj_plan.GetRightPlan(), nlj_plan.Predicate(),
                                                     nlj_plan.GetJoinType());

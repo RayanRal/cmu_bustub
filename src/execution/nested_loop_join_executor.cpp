@@ -59,6 +59,22 @@ void NestedLoopJoinExecutor::Init() {
   left_executor_->Next(&left_tuples_, &left_rids_, BUSTUB_BATCH_SIZE);
 }
 
+/** Emit one NULL-padded row for `left_tuple` (LEFT join over an empty right side). */
+void NestedLoopJoinExecutor::EmitNullPaddedLeftRow(const Tuple &left_tuple, std::vector<Tuple> *tuple_batch,
+                                                   std::vector<RID> *rid_batch) {
+  std::vector<Value> values;
+  values.reserve(left_executor_->GetOutputSchema().GetColumnCount() +
+                 right_executor_->GetOutputSchema().GetColumnCount());
+  for (uint32_t i = 0; i < left_executor_->GetOutputSchema().GetColumnCount(); ++i) {
+    values.push_back(left_tuple.GetValue(&left_executor_->GetOutputSchema(), i));
+  }
+  for (uint32_t i = 0; i < right_executor_->GetOutputSchema().GetColumnCount(); ++i) {
+    values.push_back(ValueFactory::GetNullValueByType(right_executor_->GetOutputSchema().GetColumn(i).GetType()));
+  }
+  tuple_batch->emplace_back(std::move(values), &plan_->OutputSchema());
+  rid_batch->emplace_back();
+}
+
 /**
  * Yield the next tuple batch from the join.
  * @param[out] tuple_batch The next tuple batch produced by the join
@@ -79,17 +95,7 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
       if (plan_->GetJoinType() == JoinType::INNER) {
         return !tuple_batch->empty();
       }
-      std::vector<Value> values;
-      values.reserve(left_executor_->GetOutputSchema().GetColumnCount() +
-                     right_executor_->GetOutputSchema().GetColumnCount());
-      for (uint32_t i = 0; i < left_executor_->GetOutputSchema().GetColumnCount(); ++i) {
-        values.push_back(left_tuple.GetValue(&left_executor_->GetOutputSchema(), i));
-      }
-      for (uint32_t i = 0; i < right_executor_->GetOutputSchema().GetColumnCount(); ++i) {
-        values.push_back(ValueFactory::GetNullValueByType(right_executor_->GetOutputSchema().GetColumn(i).GetType()));
-      }
-      tuple_batch->emplace_back(std::move(values), &plan_->OutputSchema());
-      rid_batch->emplace_back();
+      EmitNullPaddedLeftRow(left_tuple, tuple_batch, rid_batch);
 
       // Move to next left tuple
       left_idx_++;
@@ -154,17 +160,7 @@ auto NestedLoopJoinExecutor::Next(std::vector<bustub::Tuple> *tuple_batch, std::
         right_empty_ = true;
       }
       if (plan_->GetJoinType() == JoinType::LEFT && !matched_) {
-        std::vector<Value> values;
-        values.reserve(left_executor_->GetOutputSchema().GetColumnCount() +
-                       right_executor_->GetOutputSchema().GetColumnCount());
-        for (uint32_t i = 0; i < left_executor_->GetOutputSchema().GetColumnCount(); ++i) {
-          values.push_back(left_tuple.GetValue(&left_executor_->GetOutputSchema(), i));
-        }
-        for (uint32_t i = 0; i < right_executor_->GetOutputSchema().GetColumnCount(); ++i) {
-          values.push_back(ValueFactory::GetNullValueByType(right_executor_->GetOutputSchema().GetColumn(i).GetType()));
-        }
-        tuple_batch->emplace_back(std::move(values), &plan_->OutputSchema());
-        rid_batch->emplace_back();
+        EmitNullPaddedLeftRow(left_tuple, tuple_batch, rid_batch);
       }
 
       // Move to next left tuple

@@ -270,6 +270,8 @@ auto Optimizer::OptimizeSeqScanAsIndexScan(const bustub::AbstractPlanNodeRef &pl
     if (seq_scan.filter_predicate_ != nullptr) {
       const auto table_info = catalog_.GetTable(seq_scan.GetTableOid());
       const auto indices = catalog_.GetTableIndexes(table_info->name_);
+      // The range rewrite runs first, so even single equalities (e.g. `v = 2`) become degenerate `[2,2]`
+      // range scans; the legacy point-lookup path below now serves only OR-of-equalities.
       if (auto range_plan = TrySeqScanAsIndexRangeScan(seq_scan, table_info, indices, optimized_plan->output_schema_);
           range_plan != nullptr) {
         return range_plan;

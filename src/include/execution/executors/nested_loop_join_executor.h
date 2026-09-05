@@ -40,6 +40,9 @@ class NestedLoopJoinExecutor : public AbstractExecutor {
   auto GetOutputSchema() const -> const Schema & override { return plan_->OutputSchema(); };
 
  private:
+  /** Emit one NULL-padded row for `left_tuple` (LEFT join over an empty right side). */
+  void EmitNullPaddedLeftRow(const Tuple &left_tuple, std::vector<Tuple> *tuple_batch, std::vector<RID> *rid_batch);
+
   /** The NestedLoopJoin plan node to be executed. */
   const NestedLoopJoinPlanNode *plan_;
   /** The child executor that produces tuple for the left side of join. */

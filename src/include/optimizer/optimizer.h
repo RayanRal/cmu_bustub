@@ -50,6 +50,9 @@ class Optimizer {
 
   auto ConvertNLJToHashJoinAllOrNothing(const NestedLoopJoinPlanNode &nlj_plan) -> AbstractPlanNodeRef;
 
+  auto TryPushIntoChildNLJ(AbstractPlanNodeRef *child, uint8_t from_side, std::vector<AbstractExpressionRef> *push)
+      -> bool;
+
   auto OptimizeNLJAsIndexJoin(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
 
   auto OptimizeEliminateTrueFilter(const AbstractPlanNodeRef &plan) -> AbstractPlanNodeRef;
